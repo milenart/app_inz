@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import android.location.LocationManager
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -16,16 +17,20 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
-import androidx.lifecycle.Observer
 import org.altbeacon.beacon.Beacon
 import org.altbeacon.beacon.BeaconManager
+import org.altbeacon.beacon.BeaconParser
 import org.altbeacon.beacon.Region
 
 class MainActivity : AppCompatActivity() {
 
+    companion object {
+        private const val TAG = "pw.MainActivity"
+    }
+
     private lateinit var connectionStateReceiver: ConnectionStateChangeReceiver
-    private lateinit var beaconManager: BeaconManager
-    private val region = Region("all-beacons-region", null, null, null)//?????????
+    private var beaconManager: BeaconManager? = null
+    private val region = Region("all-beacons-region", null, null, null)
 
     private val requestPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
@@ -44,6 +49,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContentView(R.layout.activity_main)
+        setUpBeaconManager()
         setUpUI()
         beaconManager = BeaconManager.getInstanceForApplication(this)
         requestRequiredPermissions()
@@ -54,9 +60,9 @@ class MainActivity : AppCompatActivity() {
         unregisterReceiver(connectionStateReceiver)
         cleanupBeaconManager()
     }
+
     private fun cleanupBeaconManager() {
-        beaconManager.stopRangingBeacons(region)
-        beaconManager.getRegionViewModel(region).rangedBeacons.removeObservers(this)
+        beaconManager?.stopRangingBeacons(region)
     }
 
     private fun setUpUI() {
@@ -88,7 +94,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun allPermissionsGranted(permissions: Array<String>): Boolean {
         permissions.forEach { permissionName ->
-            if (ContextCompat.checkSelfPermission(this, permissionName) == PackageManager.PERMISSION_DENIED) {
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    permissionName
+                ) == PackageManager.PERMISSION_DENIED
+            ) {
                 return false
             }
         }
@@ -96,7 +106,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun listenForConnectionChanges() {
-        Toast.makeText(this, "Upewnij się, że masz włączony GPS oraz Bluetooth.", Toast.LENGTH_SHORT).show()
+        Toast.makeText(
+            this,
+            "Upewnij się, że masz włączony GPS oraz Bluetooth.",
+            Toast.LENGTH_SHORT
+        ).show()
         connectionStateReceiver = ConnectionStateChangeReceiver(
             onBothEnabled = { startScanningIfPossible() },
             onEitherDisabled = { cleanupBeaconManager() }
@@ -120,23 +134,31 @@ class MainActivity : AppCompatActivity() {
     private fun startScanningIfPossible() {
         Toast.makeText(this, "Skanowanie rozpoczęte :)", Toast.LENGTH_SHORT).show()
         scanForBeacons()
+
+    }
+
+    private fun setUpBeaconManager() {
+        if (beaconManager == null) {
+            beaconManager = BeaconManager.getInstanceForApplication(this)
+            listOf(
+                BeaconParser.EDDYSTONE_UID_LAYOUT,
+                BeaconParser.EDDYSTONE_TLM_LAYOUT,
+                BeaconParser.EDDYSTONE_URL_LAYOUT,
+            ).forEach {
+                beaconManager?.beaconParsers?.add(BeaconParser().setBeaconLayout(it))
+            }
+            beaconManager?.addRangeNotifier { beacons, _ ->
+                Log.d(TAG, "num of becones:${beacons.count()}")
+            }
+        }
     }
 
     private fun scanForBeacons() {
-        val rangingObserver = Observer<Collection<Beacon>> { beacons ->
-            if (beacons.isEmpty()) {
-                Toast.makeText(this, "Nie znaleziono żadnych beaconów", Toast.LENGTH_SHORT).show()
-            } else {
-                Toast.makeText(this, "Wykryto: ${beacons.count()} beaconów", Toast.LENGTH_SHORT).show()
-                val threeClosestBeacons = beacons.sortedBy { it.distance }.take(3)
-                calculateDevicePosition(threeClosestBeacons)
-            }
-        }
-        beaconManager.getRegionViewModel(region).rangedBeacons.observe(this, rangingObserver)
-        beaconManager.startRangingBeacons(region)
+        //beaconManager.getRegionViewModel(region).rangedBeacons.observe(this, rangingObserver)
+        beaconManager?.startRangingBeacons(region)
     }
 
     private fun calculateDevicePosition(beacons: List<Beacon>) {
-        // TODO: Implementacja trilateracji
+
     }
 }
