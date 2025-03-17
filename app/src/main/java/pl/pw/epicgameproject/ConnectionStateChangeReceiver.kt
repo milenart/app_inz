@@ -6,7 +6,11 @@ import android.content.Intent
 import android.location.LocationManager
 import android.util.Log
 
-class ConnectionStateChangeReceiver : BroadcastReceiver() {
+class ConnectionStateChangeReceiver(
+    private val onBothEnabled: () -> Unit,
+    private val onEitherDisabled: () -> Unit
+) : BroadcastReceiver() {
+
     var isGpsEnabled = false
     var isBluetoothEnabled = false
     override fun onReceive(context: Context?, intent: Intent?) {
@@ -29,10 +33,13 @@ class ConnectionStateChangeReceiver : BroadcastReceiver() {
             }
         }
     }
-    private fun scanBLEDevices(){
-        if (isGpsEnabled&&isBluetoothEnabled){
-            //TODO skanowanie urządzeń
-        }
 
+    private fun scanBLEDevices() {
+        if (isGpsEnabled && isBluetoothEnabled) {
+            onBothEnabled()
+        } else {
+            onEitherDisabled()
+
+        }
     }
 }
