@@ -21,6 +21,10 @@ import org.altbeacon.beacon.Beacon
 import org.altbeacon.beacon.BeaconManager
 import org.altbeacon.beacon.BeaconParser
 import org.altbeacon.beacon.Region
+import pl.pw.epicgameproject.data.model.ArchiveBeacon
+import pl.pw.epicgameproject.data.model.BeaconFile
+import android.content.res.AssetManager
+import com.google.gson.Gson
 
 class MainActivity : AppCompatActivity() {
 
@@ -53,6 +57,7 @@ class MainActivity : AppCompatActivity() {
         setUpUI()
         beaconManager = BeaconManager.getInstanceForApplication(this)
         requestRequiredPermissions()
+        var archiveBeacons = loadBeaconsFromAssets()
     }
 
     override fun onDestroy() {
@@ -122,9 +127,9 @@ class MainActivity : AppCompatActivity() {
         }
         registerReceiver(connectionStateReceiver, intentFilter)
 
-        val locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        val locationManager = getSystemService(LOCATION_SERVICE) as LocationManager
         val gpsEnabled = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)
-        val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+        val bluetoothManager = getSystemService(BLUETOOTH_SERVICE) as BluetoothManager
         val bluetoothEnabled = bluetoothManager.adapter.isEnabled
         if (gpsEnabled && bluetoothEnabled) {
             startScanningIfPossible()
@@ -161,4 +166,35 @@ class MainActivity : AppCompatActivity() {
     private fun calculateDevicePosition(beacons: List<Beacon>) {
 
     }
+    private fun loadBeaconsFromAssets(): List<ArchiveBeacon> {
+        val assetManager = assets
+        val beaconFiles: List<String> = assetManager.list("")?.filter {
+            it.startsWith("beacons_") && it.endsWith(".txt")
+        } ?: emptyList()
+
+        val gson = Gson()
+        val allBeacons = mutableListOf<ArchiveBeacon>()
+
+        for (fileName in beaconFiles) {
+            assetManager.open(fileName).use { inputStream ->
+                val jsonText = inputStream.bufferedReader().use { it.readText() }
+                val beaconFile = gson.fromJson(jsonText, BeaconFile::class.java)
+                beaconFile.items?.forEach { item ->
+                    if (item.beaconUid != null && item.latitude != null && item.longitude != null) {
+                        allBeacons.add(
+                            ArchiveBeacon(
+                                beaconUid = item.beaconUid,
+                                latitude = item.latitude,
+                                longitude = item.longitude
+                            )
+                        )
+                    }
+                }
+
+            }
+        }
+
+        return allBeacons
+    }
+
 }
