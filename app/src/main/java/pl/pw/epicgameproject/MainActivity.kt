@@ -25,6 +25,7 @@ import pl.pw.epicgameproject.data.model.ArchiveBeacon
 import pl.pw.epicgameproject.data.model.BeaconFile
 import android.content.res.AssetManager
 import com.google.gson.Gson
+import org.osmdroid.views.MapView
 
 class MainActivity : AppCompatActivity() {
 
@@ -35,6 +36,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var connectionStateReceiver: ConnectionStateChangeReceiver
     private var beaconManager: BeaconManager? = null
     private val region = Region("all-beacons-region", null, null, null)
+    private val archiveBeacons= mutableListOf<ArchiveBeacon>()
+    private val mapView:MapView by lazy {
+        findViewById(R.id.map_view)
+    }
+
 
     private val requestPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
@@ -55,15 +61,27 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
         setUpBeaconManager()
         setUpUI()
-        beaconManager = BeaconManager.getInstanceForApplication(this)
+
         requestRequiredPermissions()
-        var archiveBeacons = loadBeaconsFromAssets()
+        loadBeaconsFromAssets()
+        Log.d(TAG, "Rchivalne becony :${archiveBeacons.count()}")
+    }
+
+    override fun onResume() {
+        super.onResume()
+        mapView.onResume()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        mapView.onPause()
     }
 
     override fun onDestroy() {
         super.onDestroy()
         unregisterReceiver(connectionStateReceiver)
         cleanupBeaconManager()
+
     }
 
     private fun cleanupBeaconManager() {
@@ -154,7 +172,9 @@ class MainActivity : AppCompatActivity() {
             }
             beaconManager?.addRangeNotifier { beacons, _ ->
                 Log.d(TAG, "num of becones:${beacons.count()}")
+                calculateDevicePosition(beacons)
             }
+
         }
     }
 
@@ -163,10 +183,36 @@ class MainActivity : AppCompatActivity() {
         beaconManager?.startRangingBeacons(region)
     }
 
-    private fun calculateDevicePosition(beacons: List<Beacon>) {
+    private fun calculateDevicePosition(beacons: MutableCollection<Beacon>) {
+        if (beacons.isEmpty()) {
+            Log.d(TAG, "Brak wykrytych beaconów")
+            return
+        }
 
+        var weightedLatitudeSum = 0.0
+        var weightedLongitudeSum = 0.0
+        var weightSum = 0.0
+
+        beacons.forEach { beacon ->
+            val realBeacon = archiveBeacons.find { it.beaconUid == beacon.bluetoothAddress }
+            if (realBeacon != null && beacon.distance > 0) {
+                val weight = 1.0 / beacon.distance
+                weightedLatitudeSum += realBeacon.latitude * weight
+                weightedLongitudeSum += realBeacon.longitude * weight
+                weightSum += weight
+            }
+        }
+
+        if (weightSum > 0) {
+            val estimatedLatitude = weightedLatitudeSum / weightSum
+            val estimatedLongitude = weightedLongitudeSum / weightSum
+            Log.d(TAG, "Szacowana pozycja: Latitude: $estimatedLatitude, Longitude: $estimatedLongitude")
+        } else {
+            Log.d(TAG, "Nie można oszacować pozycji - brak poprawnych danych.")
+        }
     }
-    private fun loadBeaconsFromAssets(): List<ArchiveBeacon> {
+
+    private fun loadBeaconsFromAssets() {
         val assetManager = assets
         val beaconFiles: List<String> = assetManager.list("")?.filter {
             it.startsWith("beacons_") && it.endsWith(".txt")
@@ -180,7 +226,7 @@ class MainActivity : AppCompatActivity() {
                 val jsonText = inputStream.bufferedReader().use { it.readText() }
                 val beaconFile = gson.fromJson(jsonText, BeaconFile::class.java)
                 beaconFile.items?.forEach { item ->
-                    if (item.beaconUid != null && item.latitude != null && item.longitude != null) {
+                    if (item.beaconUid != null) {
                         allBeacons.add(
                             ArchiveBeacon(
                                 beaconUid = item.beaconUid,
@@ -193,8 +239,8 @@ class MainActivity : AppCompatActivity() {
 
             }
         }
-
-        return allBeacons
+        archiveBeacons.clear()
+        archiveBeacons.addAll(allBeacons)
     }
 
 }
