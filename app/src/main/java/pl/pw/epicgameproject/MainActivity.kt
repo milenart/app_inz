@@ -26,6 +26,13 @@ import pl.pw.epicgameproject.data.model.BeaconFile
 import android.content.res.AssetManager
 import com.google.gson.Gson
 import org.osmdroid.views.MapView
+import org.osmdroid.config.Configuration
+import android.preference.PreferenceManager
+import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.views.overlay.Marker
+import org.osmdroid.util.GeoPoint
+
+
 
 class MainActivity : AppCompatActivity() {
 
@@ -40,6 +47,7 @@ class MainActivity : AppCompatActivity() {
     private val mapView:MapView by lazy {
         findViewById(R.id.map_view)
     }
+    private var deviceMarker: Marker? = null
 
 
     private val requestPermissionLauncher =
@@ -59,12 +67,24 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContentView(R.layout.activity_main)
+        Configuration.getInstance().load(
+            this,
+            PreferenceManager.getDefaultSharedPreferences(this)
+        )
+        val mapView: MapView = findViewById(R.id.map_view)
+        mapView.setTileSource(TileSourceFactory.MAPNIK)
+        mapView.setMultiTouchControls(true)
+        val mapController = mapView.controller
+        mapController.setZoom(14.0) // np. zoom 14
+        val startPoint = org.osmdroid.util.GeoPoint(52.2297, 21.0122) // Warszawa
+        mapController.setCenter(startPoint)
         setUpBeaconManager()
         setUpUI()
 
         requestRequiredPermissions()
         loadBeaconsFromAssets()
         Log.d(TAG, "Rchivalne becony :${archiveBeacons.count()}")
+
     }
 
     override fun onResume() {
@@ -183,7 +203,7 @@ class MainActivity : AppCompatActivity() {
         beaconManager?.startRangingBeacons(region)
     }
 
-    private fun calculateDevicePosition(beacons: MutableCollection<Beacon>) {
+        private fun calculateDevicePosition(beacons: MutableCollection<Beacon>) {
         if (beacons.isEmpty()) {
             Log.d(TAG, "Brak wykrytych beaconów")
             return
@@ -207,6 +227,8 @@ class MainActivity : AppCompatActivity() {
             val estimatedLatitude = weightedLatitudeSum / weightSum
             val estimatedLongitude = weightedLongitudeSum / weightSum
             Log.d(TAG, "Szacowana pozycja: Latitude: $estimatedLatitude, Longitude: $estimatedLongitude")
+            updateMarker(estimatedLatitude, estimatedLongitude)
+
         } else {
             Log.d(TAG, "Nie można oszacować pozycji - brak poprawnych danych.")
         }
@@ -242,5 +264,22 @@ class MainActivity : AppCompatActivity() {
         archiveBeacons.clear()
         archiveBeacons.addAll(allBeacons)
     }
+
+    private fun updateMarker(latitude: Double, longitude: Double) {
+        if (deviceMarker == null) {
+            Log.d(TAG, "Jestem w markerze : $deviceMarker")
+            deviceMarker = Marker(mapView).apply {
+                position = GeoPoint(latitude, longitude)
+                title = "Pozycja urządzenia"
+                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+            }
+            mapView.overlays.add(deviceMarker)
+        } else {
+            deviceMarker!!.position = GeoPoint(latitude, longitude)
+        }
+        mapView.invalidate()
+    }
+
+
 
 }
