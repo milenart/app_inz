@@ -47,7 +47,6 @@ import java.util.Locale
 import kotlin.math.roundToInt
 
 
-
 class MainActivity : AppCompatActivity(), SensorEventListener {
 
     // --- Widoki ---
@@ -71,14 +70,16 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
     // --- Przechowywanie Danych (w pamięci) ---
     private val wifiData = mutableListOf<Array<String>>()
     private val bleData = mutableListOf<Array<String>>()
-    private val stepAzimuthData = mutableListOf<Array<String>>()
+    private val accelerometerData = mutableListOf<Array<String>>()
+    private val gyroscopeData = mutableListOf<Array<String>>()
+    private val magnetometerData = mutableListOf<Array<String>>()
+    private val barometerData = mutableListOf<Array<String>>()
 
     // --- Sensory ---
-    private var stepSensor: Sensor? = null
-    private var rotationSensor: Sensor? = null
-    private var currentAzimuth: Float = 0.0f
-    private var totalSteps: Float = 0.0f
-    private var initialStepCount: Float = -1f
+    private var accelerometerSensor: Sensor? = null
+    private var gyroscopeSensor: Sensor? = null
+    private var magnetometerSensor: Sensor? = null
+    private var barometerSensor: Sensor? = null
 
     // --- Ścieżka ---
     private var currentRelativeLogPath: String? = null
@@ -163,6 +164,8 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         }
     }
 
+
+
     // --- Cykl Życia Aktywności ---
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -191,10 +194,15 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         }
 
         // Znalezienie Sensorów
-        stepSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
-        rotationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
-        if (stepSensor == null) Log.w(TAG, "Krokomierz (STEP_COUNTER) nie znaleziony!")
-        if (rotationSensor == null) Log.w(TAG, "Sensor wektora rotacji (ROTATION_VECTOR) nie znaleziony!")
+        accelerometerSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        gyroscopeSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
+        magnetometerSensor = sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)
+        barometerSensor = sensorManager.getDefaultSensor(Sensor.TYPE_PRESSURE)
+
+        if (accelerometerSensor == null) Log.w(TAG, "Sensor przyspieszenia (ACCELEROMETER) nie znaleziony!")
+        if (gyroscopeSensor == null) Log.w(TAG, "Sensor żyroskopu (GYROSCOPE) nie znaleziony!")
+        if (magnetometerSensor == null) Log.w(TAG, "Sensor pola magnetycznego (MAGNETIC_FIELD) nie znaleziony!")
+        if (barometerSensor == null) Log.w(TAG, "Sensor ciśnienia (PRESSURE) nie znaleziony!")
 
 
         // Znalezienie Widoków
@@ -393,11 +401,22 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         }
 
         // Sprawdź sensory
-        if (stepSensor == null && rotationSensor == null) {
-            Log.w(TAG, "Brak sensorów kroków i rotacji. Śledzenie kroków/azymutu nie będzie działać.")
-            Toast.makeText(this, "Brak wymaganych sensorów do śledzenia kroków/azymutu.", Toast.LENGTH_SHORT).show()
+        if (accelerometerSensor  == null) {
+            Log.w(TAG, "Brak sensora accelerometru.")
+            Toast.makeText(this, "Brak sensora accelerometru.", Toast.LENGTH_SHORT).show()
         }
-
+        if (gyroscopeSensor == null) {
+            Log.w(TAG, "Brak sensora giroskopa.")
+            Toast.makeText(this, "Brak sensora giroskopa.", Toast.LENGTH_SHORT).show()
+        }
+        if (magnetometerSensor == null) {
+            Log.w(TAG, "Brak sensora magnetometru.")
+            Toast.makeText(this, "Brak sensora magnetometru.", Toast.LENGTH_SHORT).show()
+        }
+        if (barometerSensor == null) {
+            Log.w(TAG, "Brak sensora barometru.")
+            Toast.makeText(this, "Brak sensora barometru.", Toast.LENGTH_SHORT).show()
+        }
         val timestampFolder = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
         val folderName = "log_$timestampFolder"
         // Tworzymy ścieżkę względną wymaganą przez MediaStore
@@ -417,15 +436,17 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         // Czyszczenie danych i dodawanie nagłówków
         wifiData.clear()
         bleData.clear()
-        stepAzimuthData.clear()
-        wifiData.add(arrayOf("Timestamp", "LatFine", "LonFine", "LatCoarse", "LonCoarse", "BSSID", "SSID", "RSSI", "Frequency"))
-        bleData.add(arrayOf("Timestamp", "LatFine", "LonFine", "LatCoarse", "LonCoarse", "DeviceName", "DeviceAddress", "RSSI"))
-        stepAzimuthData.add(arrayOf("Timestamp", "LatFine", "LonFine", "LatCoarse", "LonCoarse", "TotalSteps", "Azimuth"))
-
-        // Reset stanu kroków
-        initialStepCount = -1f
-        totalSteps = 0f
-        currentAzimuth = 0f
+        accelerometerData.clear()
+        gyroscopeData.clear()
+        magnetometerData.clear()
+        barometerData.clear()
+        wifiData.add(arrayOf("Timestamp", "BSSID", "SSID", "RSSI", "Frequency"))
+        bleData.add(arrayOf("Timestamp", "DeviceName", "DeviceAddress", "RSSI"))
+        accelerometerData.add(arrayOf("Timestamp", "AccX", "AccY", "AccZ"))
+        gyroscopeData.add(arrayOf("Timestamp", "GyroX", "GyroY", "GyroZ"))
+        magnetometerData.add(arrayOf("Timestamp", "MagX", "MagY", "MagZ"))
+        barometerData.add(arrayOf("Timestamp", "Pressure"))
+        
 
         // Start skanowania WiFi
         if (wifiManager.isWifiEnabled) {
@@ -491,17 +512,53 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                 Log.i(TAG, "Brak danych BLE do zapisania.")
             }
 
-            // Sprawdź i zapisz dane Kroków/Azymutu
-            if (stepAzimuthData.size > 1) {
+            if (accelerometerData.size > 1) {
                 try {
-                    writeCsvData(this, stepAzimuthData, "steps_log", targetPath)
+                    writeCsvData(this, accelerometerData, "accelerometer_log", targetPath)
                 } catch (e: IOException) {
-                    Log.e(TAG, "Błąd zapisu pliku CSV dla Kroków/Azymutu", e)
-                    Toast.makeText(this, "Błąd zapisu danych Kroków/Azymutu: ${e.message}", Toast.LENGTH_LONG).show()
+                    Log.e(TAG, "Błąd zapisu pliku CSV dla akcelerometru", e)
+                    Toast.makeText(this, "Błąd zapisu danych akcelerometru: ${e.message}", Toast.LENGTH_LONG).show()
                 }
             } else {
-                Log.i(TAG, "Brak danych Kroków/Azymutu do zapisania.")
+                Log.i(TAG, "Brak danych z akcelerometru do zapisania.")
             }
+
+            // Sprawdź i zapisz dane z żyroskopu
+            if (gyroscopeData.size > 1) {
+                try {
+                    writeCsvData(this, gyroscopeData, "gyroscope_log", targetPath)
+                } catch (e: IOException) {
+                    Log.e(TAG, "Błąd zapisu pliku CSV dla żyroskopu", e)
+                    Toast.makeText(this, "Błąd zapisu danych żyroskopu: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            } else {
+                Log.i(TAG, "Brak danych z żyroskopu do zapisania.")
+            }
+
+            // Sprawdź i zapisz dane z magnetometru
+            if (magnetometerData.size > 1) {
+                try {
+                    writeCsvData(this, magnetometerData, "magnetometer_log", targetPath)
+                } catch (e: IOException) {
+                    Log.e(TAG, "Błąd zapisu pliku CSV dla magnetometru", e)
+                    Toast.makeText(this, "Błąd zapisu danych magnetometru: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            } else {
+                Log.i(TAG, "Brak danych z magnetometru do zapisania.")
+            }
+
+            // Sprawdź i zapisz dane z barometru
+            if (barometerData.size > 1) {
+                try {
+                    writeCsvData(this, barometerData, "barometer_log", targetPath)
+                } catch (e: IOException) {
+                    Log.e(TAG, "Błąd zapisu pliku CSV dla barometru", e)
+                    Toast.makeText(this, "Błąd zapisu danych barometru: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            } else {
+                Log.i(TAG, "Brak danych z barometru do zapisania.")
+            }
+
             Toast.makeText(this, "Zatrzymano logowanie. Dane zapisane (jeśli zebrano).", Toast.LENGTH_SHORT).show()
         } else {
             Toast.makeText(this, "Zatrzymano logowanie (bez zapisu).", Toast.LENGTH_SHORT).show()
@@ -510,7 +567,10 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         // Zawsze czyść dane po zatrzymaniu (czy zapisano, czy nie)
         wifiData.clear()
         bleData.clear()
-        stepAzimuthData.clear()
+        accelerometerData.clear()
+        gyroscopeData.clear()
+        magnetometerData.clear()
+        barometerData.clear()
     }
 
 
@@ -625,12 +685,12 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                 if (!result.BSSID.isNullOrEmpty()) {
                     val data = arrayOf(
                         timestamp,
-                        fineLoc.first, fineLoc.second,
-                        coarseLoc.first, coarseLoc.second,
                         result.BSSID,
                         result.SSID ?: "<Brak SSID>",
                         result.level.toString(),
-                        result.frequency.toString()
+                        result.frequency.toString(),
+                        //fineLoc.first, fineLoc.second,
+                        //coarseLoc.first, coarseLoc.second,
                     )
                     wifiData.add(data)
                 }
@@ -689,7 +749,13 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
             .setReportDelay(0) // Raportuj natychmiast (0) lub w batchach (>0 ms)
             .build()
 
-        val scanFilters: List<ScanFilter> = ArrayList() // Pusta lista = skanuj wszystko
+        val scanFilters: MutableList<ScanFilter> = ArrayList() // Pusta lista = skanuj wszystko
+
+        // szukanie po nazwie urzadzenia "PW" -> beacony w gmachu glownym
+        val filterByName = ScanFilter.Builder()
+            .setDeviceName("PW")
+            .build()
+        scanFilters.add(filterByName)
 
         try {
             Log.d(TAG, "BLE: Rozpoczynanie skanowania LE...")
@@ -758,11 +824,11 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 
         val data = arrayOf(
             timestamp,
-            fineLoc.first, fineLoc.second, // LatFine, LonFine
-            coarseLoc.first, coarseLoc.second, // LatCoarse, LonCoarse
             deviceName,
             deviceAddress,
-            rssi
+            rssi,
+            //fineLoc.first, fineLoc.second,
+            //coarseLoc.first, coarseLoc.second,
         )
         bleData.add(data)
     }
@@ -770,70 +836,92 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 
     // --- Obsługa Sensorów (Kroki i Azymut) ---
     private fun registerSensors() {
-        // Sprawdź uprawnienie ACTIVITY_RECOGNITION dla krokomierza na API 29+
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION) != PackageManager.PERMISSION_GRANTED) {
-                Log.w(TAG, "Sensory: Brak uprawnienia ACTIVITY_RECOGNITION. Krokomierz nie będzie działać.")
-                Toast.makeText(this, "Brak uprawnienia do śledzenia aktywności.", Toast.LENGTH_SHORT).show()
-                // Nie rejestruj krokomierza, jeśli brak uprawnień
-                stepSensor = null // Upewnij się, że nie próbujemy go użyć
-            }
-        }
 
-        stepSensor?.let {
-            Log.d(TAG,"Sensory: Rejestrowanie krokomierza.")
-            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
-        } ?: Log.w(TAG, "Sensory: Krokomierz nie jest dostępny do rejestracji.")
+        val samplingRate = SensorManager.SENSOR_DELAY_NORMAL
 
-        rotationSensor?.let {
-            Log.d(TAG,"Sensory: Rejestrowanie sensora rotacji.")
-            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI) // UI delay jest zazwyczaj wystarczający dla orientacji
-        } ?: Log.w(TAG, "Sensory: Sensor rotacji nie jest dostępny do rejestracji.")
+        accelerometerSensor?.let {
+            Log.d(TAG, "Sensory: Rejestrowanie sensora przyspieszenia.")
+            sensorManager.registerListener(this, it, samplingRate)
+        } ?: Log.w(TAG, "Sensory: Sensor przyspieszenia nie jest dostępny do rejestracji.")
+
+        gyroscopeSensor?.let {
+            Log.d(TAG, "Sensory: Rejestrowanie sensora żyroskopu.")
+            sensorManager.registerListener(this, it, samplingRate)
+        } ?: Log.w(TAG, "Sensory: Sensor żyroskopu nie jest dostępny do rejestracji.")
+
+        magnetometerSensor?.let {
+            Log.d(TAG, "Sensory: Rejestrowanie sensora pola magnetycznego.")
+            sensorManager.registerListener(this, it, samplingRate)
+        } ?: Log.w(TAG, "Sensory: Sensor pola magnetycznego nie jest dostępny do rejestracji.")
+
+        barometerSensor?.let {
+            Log.d(TAG, "Sensory: Rejestrowanie sensora ciśnienia.")
+            sensorManager.registerListener(this, it, samplingRate)
+        } ?: Log.w(TAG, "Sensory: Sensor ciśnienia nie jest dostępny do rejestracji.")
     }
 
     override fun onSensorChanged(event: SensorEvent?) {
         if (!isLogging || event == null) return // Ignoruj, jeśli nie logujemy lub zdarzenie jest null
 
+        val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()).format(Date())
+        val (fineLoc, coarseLoc) = getCurrentLocationData()
+
         when (event.sensor.type) {
-            Sensor.TYPE_STEP_COUNTER -> {
-                val count = event.values[0]
-                // initialStepCount służy do śledzenia kroków tylko w tej sesji logowania
-                if (initialStepCount < 0) {
-                    initialStepCount = count // Zapisz pierwszą wartość jako punkt odniesienia
-                    Log.d(TAG, "Kroki: Zainicjowano licznik kroków na wartość: $initialStepCount")
-                    totalSteps = 0f // Resetuj kroki w sesji
-                } else {
-                    totalSteps = count - initialStepCount // Kroki w tej sesji
-                    // Lub po prostu loguj bieżącą wartość sensora (całkowita od restartu urządzenia)
-                    //totalSteps = count // Logujemy całkowitą wartość z sensora
-                    Log.d(TAG, "Kroki: Wykryto krok. Całkowita liczba kroków sensora: $totalSteps")
-
-                    // Zapisz dane kroku wraz z aktualnym azymutem i lokalizacją
-                    val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()).format(Date())
-                    val (fineLoc, coarseLoc) = getCurrentLocationData()
-                    val azimuthDegrees = (Math.toDegrees(currentAzimuth.toDouble()) + 360) % 360 // Konwersja na stopnie 0-360
-
-                    val data = arrayOf(
-                        timestamp,
-                        fineLoc.first, fineLoc.second,
-                        coarseLoc.first, coarseLoc.second,
-                        totalSteps.roundToInt().toString(), // Całkowita liczba kroków jako liczba całkowita
-                        String.format(Locale.US, "%.1f", azimuthDegrees) // Azymut w stopniach z 1 miejscem po przecinku
-                    )
-                    stepAzimuthData.add(data)
-                }
-
+            Sensor.TYPE_ACCELEROMETER -> {
+                val x = event.values[0]
+                val y = event.values[1]
+                val z = event.values[2]
+                //Log.v(TAG, "Akcelerometr: X=$x, Y=$y, Z=$z")
+                val data = arrayOf(
+                    timestamp,
+                    x.toString(),
+                    y.toString(),
+                    z.toString(),
+//                    fineLoc.first, fineLoc.second,
+//                    coarseLoc.first, coarseLoc.second,
+                )
+                accelerometerData.add(data)
             }
-            Sensor.TYPE_ROTATION_VECTOR -> {
-                val rotationMatrix = FloatArray(9)
-                SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
-                val orientationAngles = FloatArray(3)
-                SensorManager.getOrientation(rotationMatrix, orientationAngles)
-
-                // orientationAngles[0] zawiera azymut w radianach (-PI do PI)
-                currentAzimuth = orientationAngles[0]
-                // Logowanie azymutu może być bardzo częste, więc rób to oszczędnie
-                // Log.v(TAG, "Azymut zaktualizowany: ${Math.toDegrees(currentAzimuth.toDouble())}")
+            Sensor.TYPE_GYROSCOPE -> {
+                val x = event.values[0]
+                val y = event.values[1]
+                val z = event.values[2]
+                //Log.v(TAG, "Żyroskop: X=$x, Y=$y, Z=$z")
+                val data = arrayOf(
+                    timestamp,
+                    x.toString(),
+                    y.toString(),
+                    z.toString(),
+//                    fineLoc.first, fineLoc.second,
+//                    coarseLoc.first, coarseLoc.second,
+                )
+                gyroscopeData.add(data)
+            }
+            Sensor.TYPE_MAGNETIC_FIELD -> {
+                val x = event.values[0]
+                val y = event.values[1]
+                val z = event.values[2]
+                //Log.v(TAG, "Magnetometr: X=$x, Y=$y, Z=$z")
+                val data = arrayOf(
+                    timestamp,
+                    x.toString(),
+                    y.toString(),
+                    z.toString(),
+//                    fineLoc.first, fineLoc.second,
+//                    coarseLoc.first, coarseLoc.second,
+                )
+                magnetometerData.add(data)
+            }
+            Sensor.TYPE_PRESSURE -> {
+                val pressure = event.values[0]
+                //Log.v(TAG, "Barometr: Ciśnienie=$pressure")
+                val data = arrayOf(
+                    timestamp,
+                    pressure.toString(),
+//                    fineLoc.first, fineLoc.second,
+//                    coarseLoc.first, coarseLoc.second,
+                    )
+                barometerData.add(data)
             }
         }
     }
@@ -906,8 +994,10 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                     Log.i(TAG, "Pomyślnie zapisano ${dataList.size} wierszy do $displayName w $relativeDirectoryPath.")
                     success = true
                 }
-                // Informujemy użytkownika o pełnej ścieżce względnej
+                /*
+                //Informujemy użytkownika o pełnej ścieżce względnej
                 Toast.makeText(context, "Plik $displayName zapisany w $relativeDirectoryPath.", Toast.LENGTH_LONG).show()
+                */
 
             } ?: run {
                 Log.e(TAG, "Nie udało się otworzyć strumienia wyjściowego dla URI: $uri")
