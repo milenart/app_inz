@@ -9,7 +9,7 @@ android {
 
     defaultConfig {
         applicationId = "pl.pw.epicgameproject"
-        minSdk = 26
+        minSdk = 29
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
@@ -48,4 +48,6 @@ dependencies {
     androidTestImplementation(libs.androidx.espresso.core)
     implementation(libs.google.play.services.location)
     implementation(libs.android.beacon.library)
+    implementation(libs.opencsv)
+
 }
