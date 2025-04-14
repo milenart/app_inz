@@ -74,6 +74,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
     private val gyroscopeData = mutableListOf<Array<String>>()
     private val magnetometerData = mutableListOf<Array<String>>()
     private val barometerData = mutableListOf<Array<String>>()
+    private val allData = mutableListOf<Array<String>>()
 
     // --- Sensory ---
     private var accelerometerSensor: Sensor? = null
@@ -440,12 +441,12 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         gyroscopeData.clear()
         magnetometerData.clear()
         barometerData.clear()
-        wifiData.add(arrayOf("Timestamp", "BSSID", "SSID", "RSSI", "Frequency"))
-        bleData.add(arrayOf("Timestamp", "DeviceName", "DeviceAddress", "RSSI"))
-        accelerometerData.add(arrayOf("Timestamp", "AccX", "AccY", "AccZ"))
-        gyroscopeData.add(arrayOf("Timestamp", "GyroX", "GyroY", "GyroZ"))
-        magnetometerData.add(arrayOf("Timestamp", "MagX", "MagY", "MagZ"))
-        barometerData.add(arrayOf("Timestamp", "Pressure"))
+        wifiData.add(arrayOf("Timestamp", "scanType", "BSSID", "SSID", "RSSI", "Frequency"))
+        bleData.add(arrayOf("Timestamp", "scanType", "DeviceName", "DeviceAddress", "RSSI"))
+        accelerometerData.add(arrayOf("Timestamp", "scanType", "AccX", "AccY", "AccZ"))
+        gyroscopeData.add(arrayOf("Timestamp", "scanType", "GyroX", "GyroY", "GyroZ"))
+        magnetometerData.add(arrayOf("Timestamp", "scanType", "MagX", "MagY", "MagZ"))
+        barometerData.add(arrayOf("Timestamp", "scanType", "Pressure"))
         
 
         // Start skanowania WiFi
@@ -558,6 +559,18 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
             } else {
                 Log.i(TAG, "Brak danych z barometru do zapisania.")
             }
+
+            if (allData.size > 1) {
+                try {
+                    writeCsvData(this, allData, "allData", targetPath)
+                } catch (e: IOException) {
+                    Log.e(TAG, "Błąd zapisu pliku CSV dla allData", e)
+                    Toast.makeText(this, "Błąd zapisu danych allData: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            } else {
+                Log.i(TAG, "Brak danych z allData do zapisania.")
+            }
+
 
             Toast.makeText(this, "Zatrzymano logowanie. Dane zapisane (jeśli zebrano).", Toast.LENGTH_SHORT).show()
         } else {
@@ -678,13 +691,14 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                 return
             }
 
-            val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()).format(Date())
+            val timestamp = SimpleDateFormat("MMddHHmmss.SSS", Locale.getDefault()).format(Date())
             val (fineLoc, coarseLoc) = getCurrentLocationData()
 
             scanResults.forEach { result ->
                 if (!result.BSSID.isNullOrEmpty()) {
                     val data = arrayOf(
                         timestamp,
+                        "WiFi",
                         result.BSSID,
                         result.SSID ?: "<Brak SSID>",
                         result.level.toString(),
@@ -693,6 +707,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                         //coarseLoc.first, coarseLoc.second,
                     )
                     wifiData.add(data)
+                    allData.add(data)
                 }
             }
             Log.d(TAG, "WiFi: Dodano ${scanResults.size} wyników do listy.")
@@ -817,13 +832,14 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 
         val deviceAddress = result.device.address ?: "<Brak adresu>"
         val rssi = result.rssi.toString()
-        val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()).format(Date())
+        val timestamp = SimpleDateFormat("MMddHHmmss.SSS", Locale.getDefault()).format(Date())
         val (fineLoc, coarseLoc) = getCurrentLocationData()
 
         Log.v(TAG, "BLE: Znaleziono urządzenie: Adres=${deviceAddress}, Nazwa=${deviceName}, RSSI=${rssi}") // Użyj Verbose dla częstych logów
 
         val data = arrayOf(
             timestamp,
+            "BLE",
             deviceName,
             deviceAddress,
             rssi,
@@ -831,6 +847,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
             //coarseLoc.first, coarseLoc.second,
         )
         bleData.add(data)
+        allData.add(data)
     }
 
 
@@ -863,7 +880,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
     override fun onSensorChanged(event: SensorEvent?) {
         if (!isLogging || event == null) return // Ignoruj, jeśli nie logujemy lub zdarzenie jest null
 
-        val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()).format(Date())
+        val timestamp = SimpleDateFormat("MMddHHmmss.SSS", Locale.getDefault()).format(Date())
         val (fineLoc, coarseLoc) = getCurrentLocationData()
 
         when (event.sensor.type) {
@@ -874,6 +891,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                 //Log.v(TAG, "Akcelerometr: X=$x, Y=$y, Z=$z")
                 val data = arrayOf(
                     timestamp,
+                    "Accelerometer",
                     x.toString(),
                     y.toString(),
                     z.toString(),
@@ -881,6 +899,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 //                    coarseLoc.first, coarseLoc.second,
                 )
                 accelerometerData.add(data)
+                allData.add(data)
             }
             Sensor.TYPE_GYROSCOPE -> {
                 val x = event.values[0]
@@ -889,6 +908,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                 //Log.v(TAG, "Żyroskop: X=$x, Y=$y, Z=$z")
                 val data = arrayOf(
                     timestamp,
+                    "Gyroscope",
                     x.toString(),
                     y.toString(),
                     z.toString(),
@@ -896,6 +916,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 //                    coarseLoc.first, coarseLoc.second,
                 )
                 gyroscopeData.add(data)
+                allData.add(data)
             }
             Sensor.TYPE_MAGNETIC_FIELD -> {
                 val x = event.values[0]
@@ -904,6 +925,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                 //Log.v(TAG, "Magnetometr: X=$x, Y=$y, Z=$z")
                 val data = arrayOf(
                     timestamp,
+                    "Magnetometer",
                     x.toString(),
                     y.toString(),
                     z.toString(),
@@ -911,6 +933,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 //                    coarseLoc.first, coarseLoc.second,
                 )
                 magnetometerData.add(data)
+                allData.add(data)
             }
             Sensor.TYPE_PRESSURE -> {
                 val pressure = event.values[0]

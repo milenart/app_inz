@@ -10,7 +10,8 @@ SENSORY:
     SENSOR_DELAY_UI -> 40-60ms, wszystkie sensory
     SENSOR_DELAY_NORMAL -> jakies 200ms, wszystkie sensory
 
-
+WiFi:
+    niewiadomo czemu nagle skany sa robione co jakies 3-4 sekundy. 
 TODO:
     1. Ogarnij jak zrobic mape z markerami ktore sie zmieniaja 
     2. Częstsze skany wifi - Lipka
