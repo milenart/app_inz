@@ -851,7 +851,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
     }
 
 
-    // --- Obsługa Sensorów (Kroki i Azymut) ---
+    // --- Obsługa Sensorów ---
     private fun registerSensors() {
 
         val samplingRate = SensorManager.SENSOR_DELAY_NORMAL
