@@ -30,17 +30,15 @@ import android.os.Looper
 import android.provider.MediaStore
 import android.util.Log
 import android.widget.Button
+import android.widget.ImageView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import org.osmdroid.config.Configuration
-import org.osmdroid.tileprovider.tilesource.TileSourceFactory
-import org.osmdroid.util.GeoPoint
-import org.osmdroid.views.MapView
-import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
 import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
+import java.io.BufferedReader
 import java.io.IOException
+import java.io.InputStreamReader
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -49,10 +47,33 @@ import kotlin.math.roundToInt
 
 class MainActivity : AppCompatActivity(), SensorEventListener {
 
-    // --- Widoki ---
-    private lateinit var map: MapView
+    // --- Deklaracje widoków z nowego layoutu ---
+    private lateinit var floorPlanImageView: ImageView
+    private lateinit var routeOverlayView: RouteOverlayView
     private lateinit var startButton: Button
+    private lateinit var nextButton: Button
     private lateinit var stopButton: Button
+
+
+    // Przykladowa sciezka
+    private val some_geo_x_1 = 637245.46
+    private val some_geo_y_1 = 485716.91
+    private val some_geo_x_2 = 637260.65
+    private val some_geo_y_2 = 485717.58
+    private val some_geo_x_3 = 637261.27
+    private val some_geo_y_3 = 485746.35
+    private val some_geo_x_4 = 637225.19
+    private val some_geo_y_4 = 485761.54
+
+    private val geographicRoutePoints: List<Pair<Double, Double>> = listOf(
+        Pair(some_geo_x_1, some_geo_y_1),
+        Pair(some_geo_x_2, some_geo_y_2),
+        Pair(some_geo_x_3, some_geo_y_3),
+        Pair(some_geo_x_4, some_geo_y_4)
+
+    )
+
+
 
     // --- Managery Systemowe ---
     private lateinit var wifiManager: WifiManager
@@ -75,6 +96,15 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
     private val magnetometerData = mutableListOf<Array<String>>()
     private val barometerData = mutableListOf<Array<String>>()
     private val allData = mutableListOf<Array<String>>()
+
+    // --- Transformacje ---
+    private var paramA: Double = 0.0
+    private var paramD: Double = 0.0 // Rotation Y
+    private var paramB: Double = 0.0 // Rotation X
+    private var paramE: Double = 0.0
+    private var paramC: Double = 0.0
+    private var paramF: Double = 0.0
+    private var worldFileLoaded = false
 
     // --- Sensory ---
     private var accelerometerSensor: Sensor? = null
@@ -173,10 +203,6 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         setContentView(R.layout.activity_main)
         Log.d(TAG, "onCreate called")
 
-        // Konfiguracja OSM
-        Configuration.getInstance().load(this, getSharedPreferences("osm_prefs", Context.MODE_PRIVATE))
-        Configuration.getInstance().userAgentValue = packageName
-
         // Inicjalizacja Managerów
         wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
         locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
@@ -206,14 +232,23 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         if (barometerSensor == null) Log.w(TAG, "Sensor ciśnienia (PRESSURE) nie znaleziony!")
 
 
-        // Znalezienie Widoków
-        map = findViewById(R.id.map)
+        // --- Znajdowanie widoków z NOWEGO layoutu ---
+        floorPlanImageView = findViewById(R.id.floorPlanImageView)
+        floorPlanImageView.setImageResource(R.drawable.gmach_f0_01)
+
+//        routeOverlayView = findViewById(R.id.routeOverlayView) // Upewnij się, że ID się zgadza!
         startButton = findViewById(R.id.startButton)
+        nextButton = findViewById(R.id.nextButton)
         stopButton = findViewById(R.id.stopButton)
 
         // Ustawienie Komponentów UI
-        setupMap()
         setupButtons()
+
+        // Odpalenie parsowania pliku PGW (pozniej do usuniecia)
+        loadWorldFileParameters(this, "gmach_f0_01.pgw")
+
+        // utworzenie sciezki
+        displayGeographicRoute(geographicRoutePoints)
 
         // Rejestracja Odbiornika WiFi
         val intentFilter = IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION)
@@ -225,10 +260,147 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         }
     }
 
+     /**
+     * Przelicza współrzędne mapy (np. EPSG:2178) na współrzędne pikselowe obrazu.
+     * Zakłada, że parametry A, B, C, D, E, F zostały wcześniej wczytane z pliku world file.
+     * Używa uproszczonego wzoru dla obrazów nieobróconych (B=0, D=0).
+     * Zwraca obiekt Point(x, y) z koordynatami pikselowymi lub null w przypadku błędu.
+     */
+     private fun mapToPixel(mapX: Double, mapY: Double): Point? {
+         if (!worldFileLoaded) {
+             Log.e(TAG, "Cannot perform mapToPixel: World file parameters not loaded.")
+             return null
+         }
+
+         // Sprawdzenie czy wyznacznik nie jest zbyt bliski zeru (czyli transformacja odwracalna)
+         val denominator = paramA * paramE - paramB * paramD
+         if (kotlin.math.abs(denominator) < 1e-12) {
+             Log.e(TAG, "Cannot perform mapToPixel: Transformation matrix is not invertible.")
+             return null
+         }
+
+         // Pełny wzór odwrotnej transformacji affine
+         val deltaX = mapX - paramC
+         val deltaY = mapY - paramF
+
+         val pixelX = (paramE * deltaX - paramB * deltaY) / denominator
+         val pixelY = (paramA * deltaY - paramD * deltaX) / denominator
+
+         return Point(pixelX.toFloat(), pixelY.toFloat())
+     }
+
+
+    /**
+     * Processes a list of geographic points, converts them to pixel
+     * coordinates, creates a Route object, and sets it on the RouteOverlayView.
+     */
+    private fun displayGeographicRoute(geographicPoints: List<Pair<Double, Double>>) {
+        // Ensure world file parameters are loaded before attempting conversion
+        if (!worldFileLoaded) {
+            Log.e(TAG, "Cannot display route: World file parameters not loaded.")
+            // Optionally show a user message
+            // Toast.makeText(this, "Map data not ready yet.", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val pixelMarkers = mutableListOf<Marker>()
+
+        // Convert each geographic point to a pixel point and create a Marker
+        for (geoPoint in geographicPoints) {
+            val mapX = geoPoint.first
+            val mapY = geoPoint.second
+            val pixelPoint = mapToPixel(mapX, mapY)
+
+            if (pixelPoint != null) {
+                // By default, set initial state to PENDING
+                pixelMarkers.add(Marker(pixelPoint, MarkerState.PENDING))
+            } else {
+                Log.w(TAG, "Could not convert geographic point ($mapX, $mapY) to pixel.")
+                // Optionally handle points that fail conversion (e.g., skip them)
+            }
+        }
+
+        // Create the Route object
+        if (pixelMarkers.isNotEmpty()) {
+            val route = Route("My Adventure Route", pixelMarkers)
+
+            // Get reference to your RouteOverlayView from the layout
+            val routeOverlayView = findViewById<RouteOverlayView>(R.id.routeOverlayView)
+
+            // Set the route on the view to trigger drawing
+            routeOverlayView.setRoute(route)
+
+            Log.i(TAG, "Route with ${pixelMarkers.size} markers set for display.")
+        } else {
+            Log.w(TAG, "No valid pixel markers could be created for the route.")
+        }
+    }
+
+    private fun loadWorldFileParameters(context: Context, filename: String) {
+        Log.d(TAG, "Attempting to load world file: $filename")
+        val assetManager = context.assets
+        val params = mutableListOf<Double>()
+        try {
+            // Używamy 'use' aby zapewnić automatyczne zamknięcie strumieni
+            assetManager.open(filename).use { inputStream ->
+                InputStreamReader(inputStream).use { inputStreamReader ->
+                    BufferedReader(inputStreamReader).use { reader ->
+                        for (i in 1..6) {
+                            val line = reader.readLine()
+                            if (line != null) {
+                                try {
+                                    params.add(line.toDouble())
+                                    Log.d(TAG, "Read line $i: $line")
+                                } catch (e: NumberFormatException) {
+                                    Log.e(TAG, "Error parsing line $i ('$line') to Double in $filename", e)
+                                    worldFileLoaded = false
+                                    return // Przerwij wczytywanie przy błędzie formatu
+                                }
+                            } else {
+                                Log.e(TAG, "Error reading line $i from $filename: Unexpected end of file")
+                                worldFileLoaded = false
+                                return // Przerwij, jeśli plik jest za krótki
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (params.size == 6) {
+                paramA = params[0]
+                paramD = params[1] // Uwaga na kolejność D i B w pliku!
+                paramB = params[2]
+                paramE = params[3]
+                paramC = params[4]
+                paramF = params[5]
+                worldFileLoaded = true
+                Log.i(TAG, "World file '$filename' loaded successfully.")
+                Log.d(TAG, "Params: A=$paramA, B=$paramB, C=$paramC, D=$paramD, E=$paramE, F=$paramF")
+
+                // Sprawdzenie czy obraz nie jest obrócony (B i D bliskie zeru)
+                if (kotlin.math.abs(paramB) > 1e-9 || kotlin.math.abs(paramD) > 1e-9) {
+                    Log.w(TAG, "World file indicates image rotation (B or D is non-zero). Simple transformation formula might be inaccurate.")
+                }
+                // Sprawdzenie czy E jest ujemne
+                if (paramE >= 0) {
+                    Log.w(TAG, "Parameter E (line 4) is non-negative ($paramE). This is unusual for north-up images. Pixel Y coordinate might be inverted.")
+                }
+
+            } else {
+                // To się nie powinno zdarzyć jeśli pętla przeszła 6 razy
+                Log.e(TAG, "Error loading $filename: Incorrect number of parameters read (${params.size})")
+                worldFileLoaded = false
+            }
+
+        } catch (e: IOException) {
+            Log.e(TAG, "Error reading world file '$filename' from assets", e)
+            worldFileLoaded = false
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         Log.d(TAG, "onResume called")
-        map.onResume()
         // Jeśli logowanie było aktywne, można rozważyć jego wznowienie,
         // ale obecna logika zatrzymuje je w onPause, co jest bezpieczniejsze bez usługi pierwszoplanowej.
         // Jeśli sensory były zarejestrowane (isLogging = true), zarejestruj je ponownie.
@@ -240,7 +412,6 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
     override fun onPause() {
         super.onPause()
         Log.d(TAG, "onPause called")
-        map.onPause()
         // Zatrzymanie logowania i sensorów jest kluczowe w onPause, aby uniknąć wycieków i pracy w tle.
         if (isLogging) {
             Log.d(TAG, "Pauzowanie aktywności, zatrzymywanie logowania.")
@@ -269,32 +440,6 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
             stopLoggingInternal(saveData = false) // Zatrzymujemy bez zapisu, jeśli onDestroy jest wywołane niespodziewanie
         }
         handler.removeCallbacksAndMessages(null) // Dodatkowe zabezpieczenie
-    }
-
-    // --- Konfiguracja UI ---
-    private fun setupMap() { /* Bez zmian - kod taki jak w oryginale */
-        Log.d(TAG, "Setting up map")
-        map.setTileSource(TileSourceFactory.MAPNIK)
-        map.setMultiTouchControls(true)
-        map.controller.setZoom(18.0)
-
-        // Add location overlay
-        locationOverlay = MyLocationNewOverlay(GpsMyLocationProvider(this), map)
-        locationOverlay.enableMyLocation() // Tries to get location updates
-        locationOverlay.enableFollowLocation() // Follow user location
-        map.overlays.add(locationOverlay)
-
-        // Set initial center (e.g., Warsaw or last known location if available)
-        val startPoint = GeoPoint(52.2297, 21.0122) // Default to Warsaw center
-        map.controller.setCenter(startPoint)
-
-        // Attempt to center on current location once available
-        locationOverlay.runOnFirstFix {
-            runOnUiThread {
-                map.controller.animateTo(locationOverlay.myLocation)
-                Log.d(TAG, "Map centered on first location fix.")
-            }
-        }
     }
 
     private fun setupButtons() { /* Lekka modyfikacja logiki */
