@@ -15,6 +15,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.graphics.PointF
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -295,45 +296,64 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
      * coordinates, creates a Route object, and sets it on the RouteOverlayView.
      */
     private fun displayGeographicRoute(geographicPoints: List<Pair<Double, Double>>) {
-        // Ensure world file parameters are loaded before attempting conversion
         if (!worldFileLoaded) {
             Log.e(TAG, "Cannot display route: World file parameters not loaded.")
-            // Optionally show a user message
-            // Toast.makeText(this, "Map data not ready yet.", Toast.LENGTH_SHORT).show()
             return
         }
 
-        val pixelMarkers = mutableListOf<Marker>()
+        val routeOverlayView = findViewById<RouteOverlayView>(R.id.routeOverlayView)
 
-        // Convert each geographic point to a pixel point and create a Marker
-        for (geoPoint in geographicPoints) {
-            val mapX = geoPoint.first
-            val mapY = geoPoint.second
-            val pixelPoint = mapToPixel(mapX, mapY)
+        // Upewnij się, że widok się narysował (ma wymiary)
+        routeOverlayView.viewTreeObserver.addOnGlobalLayoutListener {
+            val pixelMarkers = mutableListOf<Marker>()
 
-            if (pixelPoint != null) {
-                // By default, set initial state to PENDING
-                pixelMarkers.add(Marker(pixelPoint, MarkerState.PENDING))
+            for (geoPoint in geographicPoints) {
+                val mapX = geoPoint.first
+                val mapY = geoPoint.second
+                val pixelPoint = mapToPixel(mapX, mapY)
+
+                if (pixelPoint != null) {
+                    val screenPoint = convertToScreenCoordinates(
+                        pixelPoint.x, pixelPoint.y,
+                        bitmapWidth = 1930,
+                        bitmapHeight = 1730,
+                        viewWidth = routeOverlayView.width,
+                        viewHeight = routeOverlayView.height
+                    )
+
+                    pixelMarkers.add(Marker(Point(screenPoint.x, screenPoint.y), MarkerState.PENDING))
+                } else {
+                    Log.w(TAG, "Could not convert geographic point ($mapX, $mapY) to pixel.")
+                }
+            }
+
+            if (pixelMarkers.isNotEmpty()) {
+                val route = Route("My Adventure Route", pixelMarkers)
+                routeOverlayView.setRoute(route)
+                Log.i(TAG, "Route with ${pixelMarkers.size} markers set for display.")
             } else {
-                Log.w(TAG, "Could not convert geographic point ($mapX, $mapY) to pixel.")
-                // Optionally handle points that fail conversion (e.g., skip them)
+                Log.w(TAG, "No valid pixel markers could be created for the route.")
             }
         }
+    }
 
-        // Create the Route object
-        if (pixelMarkers.isNotEmpty()) {
-            val route = Route("My Adventure Route", pixelMarkers)
+    private fun convertToScreenCoordinates(
+        bitmapX: Float,
+        bitmapY: Float,
+        bitmapWidth: Int,
+        bitmapHeight: Int,
+        viewWidth: Int,
+        viewHeight: Int
+    ): PointF {
+        val scale = minOf(viewWidth.toFloat() / bitmapWidth, viewHeight.toFloat() / bitmapHeight)
 
-            // Get reference to your RouteOverlayView from the layout
-            val routeOverlayView = findViewById<RouteOverlayView>(R.id.routeOverlayView)
+        val dx = (viewWidth - bitmapWidth * scale) / 2f
+        val dy = (viewHeight - bitmapHeight * scale) / 2f
 
-            // Set the route on the view to trigger drawing
-            routeOverlayView.setRoute(route)
+        val screenX = bitmapX * scale + dx
+        val screenY = bitmapY * scale + dy
 
-            Log.i(TAG, "Route with ${pixelMarkers.size} markers set for display.")
-        } else {
-            Log.w(TAG, "No valid pixel markers could be created for the route.")
-        }
+        return PointF(screenX, screenY)
     }
 
     private fun loadWorldFileParameters(context: Context, filename: String) {

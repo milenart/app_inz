@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.PointF
 import android.util.AttributeSet
 import android.view.View
 
@@ -78,6 +79,8 @@ class RouteOverlayView @JvmOverloads constructor(
         // będą widoczne na ekranie!
         invalidate()
     }
+
+
 
     /**
      * Główna metoda odpowiedzialna za rysowanie zawartości widoku.
