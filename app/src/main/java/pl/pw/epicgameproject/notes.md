@@ -13,5 +13,6 @@ SENSORY:
 WiFi:
     niewiadomo czemu nagle skany sa robione co jakies 3-4 sekundy. 
 TODO:
-    1. Ogarnij jak zrobic mape z markerami ktore sie zmieniaja 
     2. Częstsze skany wifi - Lipka
+    3. dodanie logiki usowania trasy
+    4. nie wiem czemu nie rysuje poprawnie trasy, skala cos sie zjebala

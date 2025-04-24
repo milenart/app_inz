@@ -49,5 +49,6 @@ dependencies {
     implementation(libs.google.play.services.location)
     implementation(libs.android.beacon.library)
     implementation(libs.opencsv)
+    implementation(libs.androidx.fragment.ktx)
 
 }

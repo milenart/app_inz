@@ -1,33 +1,16 @@
-package pl.pw.epicgameproject
+// RouteOverlayView.kt
+
+package pl.pw.epicgameproject // Upewnij się, że pakiet jest prawidłowy
 
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.PointF
 import android.util.AttributeSet
 import android.view.View
 
-// --- Struktury Danych (możesz je przenieść do osobnego pliku np. RouteData.kt) ---
 
-// Reprezentuje punkt na obrazie (współrzędne X, Y w pikselach)
-data class Point(val x: Float, val y: Float)
-
-// Definiuje możliwe stany markera
-enum class MarkerState {
-    PENDING, // Oczekujący (np. czerwony)
-    CURRENT, // Aktualny (np. żółty/pomarańczowy)
-    VISITED  // Odwiedzony (np. zielony)
-}
-
-// Reprezentuje pojedynczy marker na trasie
-// Zawiera punkt (lokalizację) i jego aktualny stan
-data class Marker(val point: Point, var state: MarkerState = MarkerState.PENDING)
-
-// Reprezentuje całą trasę
-data class Route(val name: String, val markers: List<Marker>)
-
-// --- Niestandardowy Widok do Rysowania Trasy ---
+// --- Niestandardowy Widok do Rysowania Trasy (używający ScreenPoint) ---
 
 class RouteOverlayView @JvmOverloads constructor(
     context: Context,
@@ -35,89 +18,91 @@ class RouteOverlayView @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : View(context, attrs, defStyleAttr) {
 
-    // Przechowuje aktualnie wyświetlaną trasę
-    private var currentRoute: Route? = null
-    // Definiuje promień rysowanych markerów (kółek) w pikselach
-    private val markerRadius = 15f
+    // --- DANE DO RYSOWANIA ---
+    // Przechowuje listę punktów do narysowania W PIKSELACH EKRANU (ScreenPoint)
+    private var drawingPixelPoints: List<ScreenPoint> = emptyList()
+    // Przechowuje listę stanów markerów (musi odpowiadać liście punktów)
+    private var drawingMarkerStates: List<MarkerState> = emptyList()
 
-    // Obiekty Paint definiują jak rysować (kolor, grubość, styl)
-    // Inicjalizujemy je raz, aby nie tworzyć ich ciągle w onDraw
+
+    // --- Obiekty Paint (pozostają bez zmian) ---
     private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#42A5F5") // Jasnoniebieski kolor linii
-        style = Paint.Style.STROKE // Rysuj tylko kontur
-        strokeWidth = 8f          // Grubość linii
-        strokeCap = Paint.Cap.ROUND // Zaokrąglone końce linii
+        color = Color.parseColor("#42A5F5")
+        style = Paint.Style.STROKE
+        strokeWidth = 8f
+        strokeCap = Paint.Cap.ROUND
     }
 
     private val pendingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.RED          // Czerwony dla oczekujących
-        style = Paint.Style.FILL   // Wypełnij kółko
+        color = Color.RED
+        style = Paint.Style.FILL
     }
 
     private val currentPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#FFA000") // Pomarańczowy dla aktualnego
+        color = Color.parseColor("#FFA000")
         style = Paint.Style.FILL
     }
 
     private val visitedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#4CAF50") // Zielony dla odwiedzonych
+        color = Color.parseColor("#4CAF50")
         style = Paint.Style.FILL
     }
 
+    private val markerRadius = 15f
+
+
     /**
-     * Publiczna metoda do ustawiania trasy, która ma być narysowana.
-     * Wywołaj tę metodę z Activity/Fragment, przekazując obiekt Route.
-     * Wywołanie tej metody (nawet z tym samym obiektem Route, ale po zmianie
-     * stanu jego markerów) spowoduje żądanie przerysowania widoku.
-     *
-     * @param route Trasa do wyświetlenia lub null, aby wyczyścić widok.
+     * Ustawia DANE DO RYSOWANIA (w pikselach ekranu).
+     * Przekazuj listy ScreenPoint i MarkerState PO wykonaniu konwersji w MainActivity.
      */
-    fun setRoute(route: Route?) {
-        this.currentRoute = route
-        // WAŻNE: Ta linia mówi systemowi Android, że zawartość tego widoku
-        // się zmieniła i musi on zostać przerysowany. Bez tego zmiany nie
-        // będą widoczne na ekranie!
+    fun setScreenRouteData(pixelPoints: List<ScreenPoint>, states: List<MarkerState>) {
+        // Zapisujemy gotowe punkty pikselowe i stany
+        this.drawingPixelPoints = pixelPoints
+        this.drawingMarkerStates = states
+        // KAŻDYM razem, gdy zmieniasz dane do narysowania, MUSISZ wywołać invalidate()
+        invalidate()
+    }
+
+    /**
+     * Metoda do wyczyszczenia rysowanej trasy.
+     */
+    fun clearRoute() {
+        this.drawingPixelPoints = emptyList()
+        this.drawingMarkerStates = emptyList()
         invalidate()
     }
 
 
-
     /**
-     * Główna metoda odpowiedzialna za rysowanie zawartości widoku.
-     * System Android wywołuje ją, gdy widok musi zostać narysowany
-     * (np. po wywołaniu invalidate() lub przy pierwszym pojawieniu się widoku).
-     *
-     * @param canvas Płótno (Canvas), na którym rysujemy.
+     * Metoda rysująca - używa gotowych punktów pikselowych (ScreenPoint).
      */
     override fun onDraw(canvas: Canvas) {
-        // super.onDraw(canvas) // Wywołanie metody z klasy nadrzędnej (View)
+        super.onDraw(canvas) // WAŻNE: Wywołaj metodę z klasy nadrzędnej (View)
 
-        // Rysuj cokolwiek tylko wtedy, gdy mamy ustawioną jakąś trasę
-        currentRoute?.let { route ->
-            val markers = route.markers
+        if (drawingPixelPoints.isNotEmpty()) {
+            val points = drawingPixelPoints // Lista gotowych ScreenPoint
 
-            // Sprawdzenie, czy jest co najmniej 2 markery, aby narysować linie
-            if (markers.size >= 2) {
-                // 1. Rysuj linie łączące kolejne markery
-                // Iterujemy od drugiego markera (indeks 1)
-                for (i in 1 until markers.size) {
-                    val startPoint = markers[i - 1].point // Punkt początkowy linii
-                    val endPoint = markers[i].point       // Punkt końcowy linii
+            // 1. Rysuj linie łączące kolejne punkty (ScreenPoint)
+            if (points.size >= 2) {
+                for (i in 1 until points.size) {
+                    val startPoint = points[i - 1] // ScreenPoint
+                    val endPoint = points[i]       // ScreenPoint
+                    // Użyj ScreenPoint.x i ScreenPoint.y (które są Float) do rysowania
                     canvas.drawLine(startPoint.x, startPoint.y, endPoint.x, endPoint.y, linePaint)
                 }
             }
 
-            // 2. Rysuj markery (kółka) na wierzchu linii
-            // Iterujemy po wszystkich markerach
-            markers.forEach { marker ->
-                // Wybierz odpowiedni 'Paint' (kolor i styl) w zależności od stanu markera
-                val paint = when (marker.state) {
+            // 2. Rysuj markery (kółka) na wierzchu linii, używając punktów ScreenPoint
+            points.forEachIndexed { index, pixelPoint ->
+                val state = drawingMarkerStates.getOrNull(index) ?: MarkerState.PENDING
+
+                val paint = when (state) {
                     MarkerState.PENDING -> pendingPaint
                     MarkerState.CURRENT -> currentPaint
                     MarkerState.VISITED -> visitedPaint
                 }
-                // Narysuj kółko w miejscu markera z wybranym kolorem
-                canvas.drawCircle(marker.point.x, marker.point.y, markerRadius, paint)
+                // Użyj ScreenPoint.x i ScreenPoint.y (które są Float) do rysowania
+                canvas.drawCircle(pixelPoint.x, pixelPoint.y, markerRadius, paint)
             }
         }
     }

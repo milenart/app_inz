@@ -2,6 +2,7 @@ package pl.pw.epicgameproject
 
 // Importy Android
 import android.Manifest
+import android.app.AlertDialog
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.BluetoothLeScanner
@@ -30,7 +31,11 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
 import android.util.Log
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewTreeObserver
 import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -43,7 +48,9 @@ import java.io.InputStreamReader
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlin.math.roundToInt
+import pl.pw.epicgameproject.MapPoint
+import pl.pw.epicgameproject.ScreenPoint
+import android.graphics.BitmapFactory
 
 
 class MainActivity : AppCompatActivity(), SensorEventListener {
@@ -54,6 +61,8 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
     private lateinit var startButton: Button
     private lateinit var nextButton: Button
     private lateinit var stopButton: Button
+    private lateinit var selectRouteButton: Button
+    private lateinit var createRouteButton: Button
 
 
     // Przykladowa sciezka
@@ -66,15 +75,19 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
     private val some_geo_x_4 = 637225.19
     private val some_geo_y_4 = 485761.54
 
-    private val geographicRoutePoints: List<Pair<Double, Double>> = listOf(
-        Pair(some_geo_x_1, some_geo_y_1),
-        Pair(some_geo_x_2, some_geo_y_2),
-        Pair(some_geo_x_3, some_geo_y_3),
-        Pair(some_geo_x_4, some_geo_y_4)
-
+    private val geographicRoutePoints: List<MapPoint> = listOf(
+        MapPoint(some_geo_x_1, some_geo_y_1),
+        MapPoint(some_geo_x_2, some_geo_y_2),
+        MapPoint(some_geo_x_3, some_geo_y_3),
+        MapPoint(some_geo_x_4, some_geo_y_4)
     )
 
+    // Ścieżki
+    private var routes: List<Route> = emptyList()
 
+    // Wymiary obrazka
+    private var bitmapWidth: Int = 0
+    private var bitmapHeight: Int = 0
 
     // --- Managery Systemowe ---
     private lateinit var wifiManager: WifiManager
@@ -232,25 +245,6 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         if (magnetometerSensor == null) Log.w(TAG, "Sensor pola magnetycznego (MAGNETIC_FIELD) nie znaleziony!")
         if (barometerSensor == null) Log.w(TAG, "Sensor ciśnienia (PRESSURE) nie znaleziony!")
 
-
-        // --- Znajdowanie widoków z NOWEGO layoutu ---
-        floorPlanImageView = findViewById(R.id.floorPlanImageView)
-        floorPlanImageView.setImageResource(R.drawable.gmach_f0_01)
-
-//        routeOverlayView = findViewById(R.id.routeOverlayView) // Upewnij się, że ID się zgadza!
-        startButton = findViewById(R.id.startButton)
-        nextButton = findViewById(R.id.nextButton)
-        stopButton = findViewById(R.id.stopButton)
-
-        // Ustawienie Komponentów UI
-        setupButtons()
-
-        // Odpalenie parsowania pliku PGW (pozniej do usuniecia)
-        loadWorldFileParameters(this, "gmach_f0_01.pgw")
-
-        // utworzenie sciezki
-        displayGeographicRoute(geographicRoutePoints)
-
         // Rejestracja Odbiornika WiFi
         val intentFilter = IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION)
         registerReceiver(wifiScanReceiver, intentFilter)
@@ -259,7 +253,102 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         if (!hasRequiredPermissions()) {
             requestMissingPermissions()
         }
+
+        // --- Znajdowanie widoków z NOWEGO layoutu ---
+        floorPlanImageView = findViewById(R.id.floorPlanImageView)
+        floorPlanImageView.setImageResource(R.drawable.gmach_f0_01)
+        routeOverlayView = findViewById(R.id.routeOverlayView)
+
+        startButton = findViewById(R.id.startButton)
+        nextButton = findViewById(R.id.nextButton)
+        stopButton = findViewById(R.id.stopButton)
+        selectRouteButton = findViewById(R.id.selectRouteButton)
+        createRouteButton = findViewById(R.id.buttonShowCreateRoute)
+
+        // Ustawienie Komponentów UI ekranu głównego
+        setupMainButtons()
+
+        // Odpalenie parsowania pliku PGW (pozniej do usuniecia)
+        loadWorldFileParameters(this, "gmach_f0_01.pgw")
+
+        // Pobranie wszystkich tras
+        routes = RouteStorage.loadRoutes(this)
+
+        val staticMarkers = geographicRoutePoints.map { mapPoint ->
+            Marker(point = mapPoint, state = MarkerState.PENDING)
+        }
+        val staticRoute = Route(name = "Trasa Statyczna", markers = staticMarkers)
+
+        routes = routes + staticRoute
+
+
+        // utworzenie sciezki w pozniejszej fazie zamiana na wybor sciezki
+        //displayGeographicRoute(geographicRoutePoints)
+
+        // --- Inicjowanie widoku dla tworzenia trasy
+        val inflater = LayoutInflater.from(this)
+        val createRouteView = inflater.inflate(R.layout.create_route_view, null)
+
+        // Dodaj go do głównego layoutu (np. FrameLayout)
+        val mainLayout = findViewById<FrameLayout>(R.id.mainFrame)
+        mainLayout.addView(createRouteView)
+
+        // Na początku ukryj ten widok
+        createRouteView.visibility = View.GONE
+
+        try {
+            val options = BitmapFactory.Options().apply {
+                inDensity = 1 // Mówimy Androidowi, żeby traktował zasób jak dla gęstości 1
+                inTargetDensity = 1 // Celujemy w gęstość 1
+                inScaled = false // NAJWAŻNIEJSZE: Wyłączamy automatyczne skalowanie gęstości
+            }
+            // Wczytujemy bitmapę z tymi opcjami, żeby dostać jej rzeczywiste wymiary plikowe
+            val bitmap = BitmapFactory.decodeResource(resources, R.drawable.gmach_f0_01, options)
+
+            if (bitmap != null) {
+                bitmapWidth = bitmap.width // Pobieramy szerokość z obiektu Bitmapy
+                bitmapHeight = bitmap.height // Pobieramy wysokość z obiektu Bitmapy
+                Log.i(TAG, "ORYGINALNE wymiary Bitmapy (z BitmapFactory.Options): $bitmapWidth x $bitmapHeight")
+
+                // Możesz teraz ustawić tę bitmapę na ImageView, jeśli nie robiłeś tego wcześniej.
+                // floorPlanImageView.setImageBitmap(bitmap) // Upewnij się, że ImageView dostaje obraz
+
+                // Zwolnienie zasobów bitmapy, jeśli nie jest używana bezpośrednio przez ImageView
+                // Jeśli ustawiasz ją w ImageView (jak w linii powyżej), Android tym zarządza.
+                // Jeśli nie, rozważ bitmap.recycle() po pobraniu wymiarów.
+                // Ale skoro wcześniej używałeś setImageResource, po prostu kontynuuj z wymiarami.
+
+            } else {
+                Log.e(TAG, "Nie udało się wczytać bitmapy z opcjami, aby uzyskać oryginalne wymiary. Wymiary bitmapy nieznane.")
+                // Obsłuż błąd - np. pokaż Toast, wyłącz funkcjonalność mapową
+                bitmapWidth = 0 // Ustaw na 0, żeby uniemożliwić dalsze obliczenia
+                bitmapHeight = 0
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Błąd podczas pobierania oryginalnych wymiarów bitmapy", e)
+            bitmapWidth = 0 // Ustaw na 0
+            bitmapHeight = 0
+        }
+        // nasluchwianie rezultatow z CreateRouteFragment
+        supportFragmentManager.setFragmentResultListener("route_saved_key", this) { requestKey, bundle ->
+            // Ten kod wykona się, gdy Fragment wyśle wynik z kluczem "route_saved_key"
+            val isSaved = bundle.getBoolean("route_saved_success", false) // Odczytujemy dane z Bundle
+
+            if (isSaved) {
+                // --- TUTAJ PRZEŁADOWUJEMY LISTĘ TRAS ---
+                routes = RouteStorage.loadRoutes(this)
+                Log.d(TAG, "Trasy przeładowane po zapisie Fragmentu. Liczba tras: ${routes.size}")
+                // Opcjonalnie: Poinformuj użytkownika lub zaktualizuj UI głównego ekranu
+                // Toast.makeText(this, "Lista tras odświeżona.", Toast.LENGTH_SHORT).show()
+
+                // Tutaj możesz też odświeżyć np. przycisk wyboru trasy, jeśli wyświetla liczbę tras itp.
+                // if (routes.isNotEmpty()) { selectRouteButton.isEnabled = true } // Przykład
+            } else {
+                Log.w(TAG, "Fragment zgłosił wynik, ale zapis nie powiódł się?")
+            }
+        }
     }
+
 
      /**
      * Przelicza współrzędne mapy (np. EPSG:2178) na współrzędne pikselowe obrazu.
@@ -267,7 +356,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
      * Używa uproszczonego wzoru dla obrazów nieobróconych (B=0, D=0).
      * Zwraca obiekt Point(x, y) z koordynatami pikselowymi lub null w przypadku błędu.
      */
-     private fun mapToPixel(mapX: Double, mapY: Double): Point? {
+     private fun mapToPixel(mapX: Double, mapY: Double): ScreenPoint? {
          if (!worldFileLoaded) {
              Log.e(TAG, "Cannot perform mapToPixel: World file parameters not loaded.")
              return null
@@ -287,56 +376,135 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
          val pixelX = (paramE * deltaX - paramB * deltaY) / denominator
          val pixelY = (paramA * deltaY - paramD * deltaX) / denominator
 
-         return Point(pixelX.toFloat(), pixelY.toFloat())
+         return ScreenPoint(pixelX.toFloat(), pixelY.toFloat())
      }
 
 
     /**
-     * Processes a list of geographic points, converts them to pixel
-     * coordinates, creates a Route object, and sets it on the RouteOverlayView.
+     * Processes a given Route object, converts its markers' points from raw map
+     * coordinates (Double) to screen pixel coordinates (Float), and sets it on
+     * the RouteOverlayView for display after the view is laid out.
+     *
+     * @param routeToDisplay The Route object to display, or null to clear the display.
+     * Assumes points within this Route are Point(Double, Double) raw map coordinates.
      */
-    private fun displayGeographicRoute(geographicPoints: List<Pair<Double, Double>>) {
-        if (!worldFileLoaded) {
-            Log.e(TAG, "Cannot display route: World file parameters not loaded.")
+    fun displayGeographicRoute(routeToDisplay: Route?) { // Przyjmuje Route (z MapPoint)
+        val routeOverlayView = findViewById<RouteOverlayView>(R.id.routeOverlayView) // Pobierz widok
+
+        // 1. Obsługa przypadku null i brak PGW
+        if (routeToDisplay == null || !worldFileLoaded) {
+            if (routeToDisplay == null) Log.i(TAG, "Attempting to clear route display.")
+            if (!worldFileLoaded) Log.e(TAG, "Cannot display route: World file parameters not loaded.")
+            // Wyczyść przekazując puste listy ScreenPoint i MarkerState do RouteOverlayView
+            routeOverlayView.setScreenRouteData(emptyList(), emptyList())
+            if (!worldFileLoaded) Toast.makeText(this, "Błąd: Parametry mapy nie wczytane.", Toast.LENGTH_SHORT).show()
             return
         }
 
-        val routeOverlayView = findViewById<RouteOverlayView>(R.id.routeOverlayView)
+        // 2. Blok kodu, który wykonuje faktyczne PRZELICZENIE i RYSOWANIE
+        // Ten blok potrzebuje wymiarów widoku, dlatego jest w lamdzie/funkcji.
+        val performConversionAndSet = {
+            // Sprawdzamy, czy widok na pewno ma wymiary (powinno być OK, jeśli tu dotarliśmy po layoucie)
+            // i czy wymiary bitmapy są znane
 
-        // Upewnij się, że widok się narysował (ma wymiary)
-        routeOverlayView.viewTreeObserver.addOnGlobalLayoutListener {
-            val pixelMarkers = mutableListOf<Marker>()
+            Log.d(TAG, "--- Rozpoczęcie Konwersji dla trasy: ${routeToDisplay?.name} ---")
 
-            for (geoPoint in geographicPoints) {
-                val mapX = geoPoint.first
-                val mapY = geoPoint.second
-                val pixelPoint = mapToPixel(mapX, mapY)
+            // Loguj WSZYSTKIE PARAMETRY PGW używane w mapToPixel
+            Log.d(TAG, "PGW Parametry: A=$paramA, B=$paramB, C=$paramC, D=$paramD, E=$paramE, F=$paramF")
 
-                if (pixelPoint != null) {
-                    val screenPoint = convertToScreenCoordinates(
-                        pixelPoint.x, pixelPoint.y,
-                        bitmapWidth = 1930,
-                        bitmapHeight = 1730,
-                        viewWidth = routeOverlayView.width,
-                        viewHeight = routeOverlayView.height
-                    )
+            // Loguj WYMIARY używane w convertToScreenCoordinates
+            Log.d(TAG, "Wymiary używane w konwersji: Bitmapa (${this.bitmapWidth}x${this.bitmapHeight}), Widok (${routeOverlayView.width}x${routeOverlayView.height})")
 
-                    pixelMarkers.add(Marker(Point(screenPoint.x, screenPoint.y), MarkerState.PENDING))
-                } else {
-                    Log.w(TAG, "Could not convert geographic point ($mapX, $mapY) to pixel.")
+            if (routeOverlayView.width > 0 && routeOverlayView.height > 0 && bitmapWidth > 0 && bitmapHeight > 0) {
+                // Te listy będą przechowywać ScreenPoint (piksele ekranu) i stany do przekazania do RouteOverlayView
+                val screenPixelPoints = mutableListOf<ScreenPoint>()
+                val markerStatesForDrawing = mutableListOf<MarkerState>()
+
+
+                // --- ITERUJEMY PRZEZ MARKERY W PRZEKAZANYM OBIEKCIE ROUTE (z MapPoint(Double, Double)) ---
+                for (marker in routeToDisplay.markers) {
+                    // Pobieramy SUROWE współrzędne mapowe (Double) z MapPoint w Markeri
+                    val mapPoint_double = marker.point // To jest MapPoint(Double, Double)
+                    val mapX_double = mapPoint_double.x // Double
+                    val mapY_double = mapPoint_double.y // Double
+
+                    Log.d(TAG, "Konwersja Punktu: Surowe Double ($mapX_double, $mapY_double)") // Debugowanie
+
+
+                    // Etap 1: Surowe Double -> Piksele obrazu mapy PNG (ScreenPoint)
+                    // mapToPixel przyjmuje Double i zwraca ScreenPoint(Float, Float) (piksele obrazu)
+                    val imagePixelPoint_float = mapToPixel(mapX_double, mapY_double)
+
+                    if (imagePixelPoint_float != null) {
+                        Log.d(TAG, "  mapToPixel -> Piksele Obrazu PNG (${imagePixelPoint_float.x}, ${imagePixelPoint_float.y})") // Debugowanie
+
+                        // Etap 2: Piksele obrazu mapy PNG (ScreenPoint) -> Piksele ekranu (ScreenPoint)
+                        // convertToScreenCoordinates przyjmuje Float, więc bierzemy x/y z ScreenPoint z mapToPixel
+                        val screenPoint_float = convertToScreenCoordinates(
+                            imagePixelPoint_float.x, // Wejście to ScreenPoint z mapToPixel, używamy jego Floatów
+                            imagePixelPoint_float.y,
+                            bitmapWidth = this.bitmapWidth, // Rzeczywiste wymiary bitmapy
+                            bitmapHeight = this.bitmapHeight,
+                            viewWidth = routeOverlayView.width, // Rzeczywiste wymiary widoku
+                            viewHeight = routeOverlayView.height // Rzeczywiste wymiary widoku
+                        )
+
+                        Log.d(TAG, "  convertToScreenCoordinates -> Piksele Ekranu (${screenPoint_float.x}, ${screenPoint_float.y})") // Debugowanie
+
+                        // --- Dodajemy ScreenPoint (piksele ekranu) i stan do list do rysowania ---
+                        screenPixelPoints.add(screenPoint_float) // Dodajemy ScreenPoint (piksele ekranu)
+                        markerStatesForDrawing.add(marker.state) // Dodajemy odpowiadający stan
+                    } else {
+                        Log.w(TAG, "Could not convert map point (${mapX_double}, ${mapY_double}) to image pixel (mapToPixel returned null).")
+                    }
                 }
-            }
 
-            if (pixelMarkers.isNotEmpty()) {
-                val route = Route("My Adventure Route", pixelMarkers)
-                routeOverlayView.setRoute(route)
-                Log.i(TAG, "Route with ${pixelMarkers.size} markers set for display.")
+                // --- PO PRZELICZENIU WSZYSTKICH PUNKTÓW ---
+                if (screenPixelPoints.isNotEmpty()) {
+                    // Przekazujemy gotowe listy ScreenPoint (piksele ekranu) i MarkerState do RouteOverlayView
+                    routeOverlayView.setScreenRouteData(screenPixelPoints, markerStatesForDrawing)
+
+                    Log.i(TAG, "Route '${routeToDisplay.name}' processed (${routeToDisplay.markers.size} MapPoints) and set for display (${screenPixelPoints.size} ScreenPoints).")
+                } else {
+                    Log.w(TAG, "No valid screen pixel points could be created for route '${routeToDisplay.name}'. Clearing display.")
+                    routeOverlayView.clearRoute() // Użyj metody do czyszczenia
+                }
+
             } else {
-                Log.w(TAG, "No valid pixel markers could be created for the route.")
+                // Logujemy, jeśli blok performConversionAndSet został wywołany, ale wymiary były 0
+                Log.e(TAG, "performRouteDisplay called but view or bitmap dimensions are not available! " +
+                        "View: ${routeOverlayView.width}x${routeOverlayView.height}, " +
+                        "Bitmap: ${bitmapWidth}x${bitmapHeight}")
+                routeOverlayView.clearRoute() // Wyczyść na wszelki wypadek
+                Toast.makeText(this, "Błąd: Wymiary widoku mapy niedostępne.", Toast.LENGTH_SHORT).show()
             }
         }
-    }
+        // --- KONIEC BLOKU performConversionAndSet ---
 
+
+        // 3. Logika czekania na layout/wykonania od razu
+        // Sprawdź, czy widok ma wymiary (jest gotowy po layoucie)
+        if (routeOverlayView.width > 0 && routeOverlayView.height > 0) {
+            // Jeśli widok ma już wymiary, od razu wykonaj przeliczenie i rysowanie
+            Log.d(TAG, "View already laid out. Performing route display immediately for '${routeToDisplay.name}'.")
+            performConversionAndSet()
+        } else {
+            // Jeśli widok nie ma jeszcze wymiarów, dodaj listenera, żeby poczekać na layout
+            Log.d(TAG, "View not yet laid out. Adding OnGlobalLayoutListener for '${routeToDisplay.name}'.")
+            routeOverlayView.viewTreeObserver.addOnGlobalLayoutListener(
+                object : ViewTreeObserver.OnGlobalLayoutListener {
+                    override fun onGlobalLayout() {
+                        // Usuwamy listenera od razu po pierwszym wywołaniu po layoucie
+                        routeOverlayView.viewTreeObserver.removeOnGlobalLayoutListener(this)
+
+                        // Teraz, gdy widok ma wymiary, wykonaj przeliczenie i rysowanie
+                        Log.d(TAG, "Layout finished. Performing route display from listener for '${routeToDisplay.name}'.")
+                        performConversionAndSet()
+                    }
+                }
+            )
+        }
+    }
     private fun convertToScreenCoordinates(
         bitmapX: Float,
         bitmapY: Float,
@@ -344,7 +512,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         bitmapHeight: Int,
         viewWidth: Int,
         viewHeight: Int
-    ): PointF {
+    ): ScreenPoint {
         val scale = minOf(viewWidth.toFloat() / bitmapWidth, viewHeight.toFloat() / bitmapHeight)
 
         val dx = (viewWidth - bitmapWidth * scale) / 2f
@@ -353,7 +521,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         val screenX = bitmapX * scale + dx
         val screenY = bitmapY * scale + dy
 
-        return PointF(screenX, screenY)
+        return ScreenPoint(screenX, screenY)
     }
 
     private fun loadWorldFileParameters(context: Context, filename: String) {
@@ -462,8 +630,35 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         handler.removeCallbacksAndMessages(null) // Dodatkowe zabezpieczenie
     }
 
-    private fun setupButtons() { /* Lekka modyfikacja logiki */
+    private fun setupMainButtons() {
         Log.d(TAG, "Setting up buttons")
+
+
+        createRouteButton.setOnClickListener {
+            showCreateRouteFragment()
+        }
+
+        selectRouteButton.setOnClickListener {
+            if (routes.isEmpty()) {
+                Toast.makeText(this, "Brak zapisanych tras", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+
+            val routeNames = routes.map { it.name }.toTypedArray()
+
+            AlertDialog.Builder(this)
+                .setTitle("Wybierz trasę")
+                .setItems(routeNames) { _, which ->
+                    val selectedRoute = routes[which]
+
+                    // Wyświetl trasę
+                    displayGeographicRoute(selectedRoute)
+                    //routeOverlayView.setRoute(selectedRoute)
+                }
+                .setNegativeButton("Anuluj", null)
+                .show()
+        }
+
         startButton.setOnClickListener {
             Log.d(TAG, "Start button clicked")
             if (hasRequiredPermissions()) {
@@ -481,6 +676,30 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         // Stan początkowy
         stopButton.isEnabled = false
         startButton.isEnabled = hasRequiredPermissions() // Włączony tylko jeśli są uprawnienia
+    }
+
+    private fun showCreateRouteFragment() {
+        val fragmentManager = supportFragmentManager
+        val fragmentTransaction = fragmentManager.beginTransaction()
+
+        // Opcjonalnie: Animacje
+        fragmentTransaction.setCustomAnimations(
+            android.R.anim.slide_in_left,
+            android.R.anim.slide_out_right,
+            android.R.anim.slide_in_left,
+            android.R.anim.slide_out_right
+        )
+
+        val createRouteFragment = CreateRouteFragment()
+
+        // Zastąp zawartość kontenera mainFrame naszym Fragmentem
+        fragmentTransaction.replace(R.id.mainFrame, createRouteFragment)
+
+        // Dodaj do stosu powrotu, żeby przycisk wstecz działał
+        fragmentTransaction.addToBackStack(null)
+
+        // Zatwierdź zmiany
+        fragmentTransaction.commit()
     }
 
     // --- Obsługa Uprawnień ---
