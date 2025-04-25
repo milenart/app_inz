@@ -10,12 +10,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.Toast
 import androidx.fragment.app.Fragment
-// Importujemy klasy danych
-import pl.pw.epicgameproject.MapPoint
-import pl.pw.epicgameproject.Marker
-import pl.pw.epicgameproject.MarkerState
-import pl.pw.epicgameproject.Route
-import pl.pw.epicgameproject.RouteStorage
+
 
 class CreateRouteFragment : Fragment() {
 
@@ -101,6 +96,11 @@ class CreateRouteFragment : Fragment() {
             RouteStorage.addRoute(requireContext(), newRoute)
 
             Toast.makeText(requireContext(), "Trasa '$routeName' zapisana pomyślnie (${collectedMapPoints.size} punktów)!", Toast.LENGTH_LONG).show()
+
+            val resultBundle = Bundle().apply {
+                putBoolean("route_saved_success", true)
+            }
+            requireActivity().supportFragmentManager.setFragmentResult("route_saved_key", resultBundle)
 
             // --- Po zapisaniu zamknij Fragment ---
             requireActivity().supportFragmentManager.popBackStack()
