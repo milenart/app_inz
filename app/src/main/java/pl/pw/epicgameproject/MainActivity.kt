@@ -96,9 +96,6 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
     private var bluetoothAdapter: BluetoothAdapter? = null
     private var bluetoothLeScanner: BluetoothLeScanner? = null
 
-    // --- OSMDroid ---
-    private lateinit var locationOverlay: MyLocationNewOverlay
-
     // --- Stan Logowania ---
     private var isLogging = false
 
@@ -125,6 +122,20 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
     private var gyroscopeSensor: Sensor? = null
     private var magnetometerSensor: Sensor? = null
     private var barometerSensor: Sensor? = null
+
+    // Stan aplikacji
+    enum class AppState {
+        IDLE,                // Brak wybranej trasy, przycisk Start wyłączony, trasa niewidoczna
+        ROUTE_SELECTED,      // Trasa wybrana (po dialogu), przycisk Start włączony, trasa PENDING/wybrana widoczna
+        STARTED,             // Nawigacja rozpoczęta (po kliknięciu Start), przycisk Dalej widoczny
+        READY_FOR_STOP,      // Przy przedostatnim punkcie (po kliknięciu Dalej), przycisk Stop widoczny
+        FINISHED_DISPLAYED   // Nawigacja zakończona (po kliknięciu Stop), trasa ukończona widoczna, przycisk Start włączony
+    }
+
+    // zmienne potrzebne do obsługi przycisków
+    private var currentAppState: AppState = AppState.IDLE // Aktualny stan aplikacji
+    private var selectedRoute: Route? = null // Aktualnie wybrana trasa (przechowuje MapPoint)
+    private var currentPointIndex: Int = -1
 
     // --- Ścieżka ---
     private var currentRelativeLogPath: String? = null
@@ -259,6 +270,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         floorPlanImageView.setImageResource(R.drawable.gmach_f0_01)
         routeOverlayView = findViewById(R.id.routeOverlayView)
 
+
         startButton = findViewById(R.id.startButton)
         nextButton = findViewById(R.id.nextButton)
         stopButton = findViewById(R.id.stopButton)
@@ -388,7 +400,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
      * @param routeToDisplay The Route object to display, or null to clear the display.
      * Assumes points within this Route are Point(Double, Double) raw map coordinates.
      */
-    fun displayGeographicRoute(routeToDisplay: Route?) { // Przyjmuje Route (z MapPoint)
+    fun displayGeographicRoute(routeToDisplay: Route?, currentTargetIndex: Int = -1) { // Przyjmuje Route (z MapPoint)
         val routeOverlayView = findViewById<RouteOverlayView>(R.id.routeOverlayView) // Pobierz widok
 
         // 1. Obsługa przypadku null i brak PGW
@@ -422,7 +434,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 
 
                 // --- ITERUJEMY PRZEZ MARKERY W PRZEKAZANYM OBIEKCIE ROUTE (z MapPoint(Double, Double)) ---
-                for (marker in routeToDisplay.markers) {
+                for ((index, marker) in routeToDisplay.markers.withIndex()){
                     // Pobieramy SUROWE współrzędne mapowe (Double) z MapPoint w Markeri
                     val mapPoint_double = marker.point // To jest MapPoint(Double, Double)
                     val mapX_double = mapPoint_double.x // Double
@@ -451,9 +463,17 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 
                         Log.d(TAG, "  convertToScreenCoordinates -> Piksele Ekranu (${screenPoint_float.x}, ${screenPoint_float.y})") // Debugowanie
 
+                        val state = when {
+                            index <= currentTargetIndex -> MarkerState.VISITED // Punkty przed celem są odwiedzone
+                            index == currentTargetIndex + 1 -> MarkerState.CURRENT // Punkt celu jest aktualny
+                            else -> MarkerState.PENDING // Punkty po celu oczekują
+                        }
+                        markerStatesForDrawing.add(state)
+                        screenPixelPoints.add(screenPoint_float)
+
                         // --- Dodajemy ScreenPoint (piksele ekranu) i stan do list do rysowania ---
-                        screenPixelPoints.add(screenPoint_float) // Dodajemy ScreenPoint (piksele ekranu)
-                        markerStatesForDrawing.add(marker.state) // Dodajemy odpowiadający stan
+//                        screenPixelPoints.add(screenPoint_float) // Dodajemy ScreenPoint (piksele ekranu)
+//                        markerStatesForDrawing.add(marker.state) // Dodajemy odpowiadający stan
                     } else {
                         Log.w(TAG, "Could not convert map point (${mapX_double}, ${mapY_double}) to image pixel (mapToPixel returned null).")
                     }
@@ -633,10 +653,15 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
     private fun setupMainButtons() {
         Log.d(TAG, "Setting up buttons")
 
+        startButton.visibility = View.VISIBLE
+        startButton.isEnabled = false
+        nextButton.visibility = View.GONE
+        stopButton.visibility = View.GONE
 
         createRouteButton.setOnClickListener {
             showCreateRouteFragment()
         }
+
 
         selectRouteButton.setOnClickListener {
             if (routes.isEmpty()) {
@@ -648,34 +673,194 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 
             AlertDialog.Builder(this)
                 .setTitle("Wybierz trasę")
-                .setItems(routeNames) { _, which ->
+                .setItems(routeNames) { dialog, which ->
                     val selectedRoute = routes[which]
 
+                    this.selectedRoute = selectedRoute
+                    startButton.isEnabled = true
+
+                    currentAppState = AppState.ROUTE_SELECTED
+                    Log.d(TAG, "Stan aplikacji: ${currentAppState}")
+
+                    this.currentPointIndex = -1
+
                     // Wyświetl trasę
-                    displayGeographicRoute(selectedRoute)
+                    displayGeographicRoute(selectedRoute, this.currentPointIndex)
                     //routeOverlayView.setRoute(selectedRoute)
+
+                    Toast.makeText(this, "Wybrano trasę: ${this.selectedRoute?.name}", Toast.LENGTH_SHORT).show()
+
+                    dialog.dismiss()
                 }
                 .setNegativeButton("Anuluj", null)
                 .show()
         }
 
+
         startButton.setOnClickListener {
-            Log.d(TAG, "Start button clicked")
-            if (hasRequiredPermissions()) {
-                startLogging()
+            // Sprawdź, czy jesteśmy w stanie ROUTE_SELECTED
+            if (currentAppState != AppState.ROUTE_SELECTED || this.selectedRoute == null || this.selectedRoute!!.markers.isEmpty()) {
+                Log.w(TAG, "Przycisk Start kliknięty w nieoczekiwanym stanie (${currentAppState}) lub brak trasy.")
+                resetAppState()
+                return@setOnClickListener
+            }
+
+            val route = this.selectedRoute!!
+
+            // --- Logika po kliknięciu "Start" (przy punkcie 0) ---
+            // Użytkownik potwierdza dotarcie do punktu 0.
+            this.currentPointIndex = 0 // Index POTWIERDZONEGO punktu
+
+            // Ukryj przycisk Start
+            startButton.visibility = View.GONE
+
+
+            // Zmieniamy przyciski w zależności od tego, czy trasa ma tylko 1 punkt
+            if (route.markers.size > 1) {
+                // Trasa ma więcej niż 1 punkt, pokaż przycisk Dalej
+                nextButton.visibility = View.VISIBLE
+                stopButton.visibility = View.GONE
+                currentAppState = AppState.STARTED // Stan: rozpoczęta, Dalej widoczny
+                Log.d(TAG, "Stan aplikacji: ${currentAppState}. Rozpoczęto nawigację (punkt 0), pokaż Dalej.")
+                Toast.makeText(this, "Nawigacja rozpoczęta (punkt 0)!", Toast.LENGTH_SHORT).show()
             } else {
-                Log.w(TAG, "Start clicked but permissions missing, requesting.")
-                requestMissingPermissions()
+                // Trasa ma tylko 1 punkt. Po Start od razu przechodzimy do stanu Gotowy do Stop.
+                // Przycisk Stop jest od razu widoczny.
+                nextButton.visibility = View.GONE
+                stopButton.visibility = View.VISIBLE
+                currentAppState = AppState.READY_FOR_STOP // Stan: gotowa do Stop (przy 1 punkcie)
+                Log.d(TAG, "Stan aplikacji: ${currentAppState}. Trasa ma tylko 1 punkt. Gotowa do Stop.")
+                Toast.makeText(this, "Trasa ma tylko 1 punkt. Kliknij Stop.", Toast.LENGTH_SHORT).show()
+            }
+
+            // --- Zaktualizuj wyświetlanie trasy na overlay ---
+            displayGeographicRoute(route, this.currentPointIndex)
+
+            startLogging(route)
+            val arrivedPoint = route.markers.getOrNull(this.currentPointIndex)?.point // Punkt 0
+            logNavigationButtonClick("START", this.currentPointIndex, arrivedPoint)
+        }
+
+
+        nextButton.setOnClickListener {
+            // Sprawdź, czy jesteśmy w stanie "W trakcie"
+            if (currentAppState != AppState.STARTED || this.selectedRoute == null) {
+                Log.w(TAG, "Przycisk Dalej kliknięty w nieoczekiwanym stanie lub brak trasy.")
+                // Reset do stanu początkowego
+                resetAppState()
+                return@setOnClickListener
+            }
+
+            val route = this.selectedRoute!! // Mamy pewność, że trasa istnieje na podstawie stanu
+
+            // --- Przejdź do następnego punktu ---
+            this.currentPointIndex++ // Zwiększ index
+
+            val targetPoint = route.markers.getOrNull(this.currentPointIndex)?.point
+            logNavigationButtonClick("NEXT", this.currentPointIndex, targetPoint)
+            // --- Zaktualizuj wyświetlanie trasy na overlay ---
+            // Wywołaj displayGeographicRoute, żeby trasa wyświetliła się ze zaktualizowanymi stanami (poprzedni punkt VISITED, obecny CURRENT)
+            displayGeographicRoute(route, this.currentPointIndex)
+
+            // --- Sprawdź, czy dotarliśmy do ostatniego punktu ---
+            if (this.currentPointIndex == route.markers.size - 2) {
+                // Jesteśmy przy ostatnim punkcie
+                // Ukryj przycisk Dalej, pokaż przycisk Stop
+                nextButton.visibility = View.GONE
+                stopButton.visibility = View.VISIBLE
+
+                // Zaktualizuj stan aplikacji
+                currentAppState = AppState.READY_FOR_STOP
+                Log.d(TAG, "Stan aplikacji: ${currentAppState}. Dotarto do przedostatniego punktu (${this.currentPointIndex}).")
+
+                Toast.makeText(this, "Dotarto do przedostatniego punktu!", Toast.LENGTH_SHORT).show()
+
+            } else {
+                // Nadal są kolejne punkty do przejścia
+                Log.d(TAG, "Nawigowanie do punktu index ${this.currentPointIndex}.")
+                Toast.makeText(this, "Idź do następnego punktu", Toast.LENGTH_SHORT).show()
             }
         }
 
+
         stopButton.setOnClickListener {
-            Log.d(TAG, "Stop button clicked")
-            stopLogging() // Wywołuje zapis danych
+            // Sprawdź, czy jesteśmy w stanie READY_FOR_STOP
+            // Przycisk Stop jest widoczny tylko w tym stanie.
+            // currentPointIndex W TYM MOMENCIE wskazuje na index PRZEDOSTATNIEGO punktu (size - 2),
+            // ponieważ ostatnie kliknięcie Dalej ustawiło go na size - 2 i zmieniło przycisk na Stop.
+            if (currentAppState != AppState.READY_FOR_STOP || this.selectedRoute == null) {
+                Log.w(TAG, "Przycisk Stop kliknięty w nieoczekiwanym stanie (${currentAppState}) lub brak trasy.")
+                // W przypadku błędu, resetujemy do stanu początkowego
+                resetAppState() // Wywołaj resetAppState() w przypadku NIEOCZEKIWANEGO STANU
+                return@setOnClickListener
+            }
+
+            val route = this.selectedRoute!!
+
+            // --- Logika po kliknięciu "Stop" (przy OSTATNIM punkcie) ---
+            // Użytkownik potwierdza dotarcie do ostatniego punktu.
+            // Zwiększ index ostatni raz, żeby currentPointIndex stał się indexem ostatniego punktu (size - 1).
+            this.currentPointIndex++ // Zwiększ index POTWIERDZONEGO punktu ostatni raz
+
+            // --- ZALOGUJ KLIKNIĘCIE STOP ---
+            // Zaloguj zdarzenie "STOP", index OSTATNIEGO potwierdzonego punktu (currentPointIndex), i jego współrzędne
+            val arrivedPoint = route.markers.getOrNull(this.currentPointIndex)?.point // Punkt currentPointIndex (index ostatniego punktu)
+            logNavigationButtonClick("STOP", this.currentPointIndex, arrivedPoint)
+
+            Log.i(TAG, "Nawigacja zakończona dla trasy: ${route.name}.")
+
+            stopLogging()
+
+            displayGeographicRoute(route, route.markers.size)
+
+            Handler(Looper.getMainLooper()).postDelayed({
+                Log.d(TAG, "Opóźnione wywołanie resetAppState() po Stop.")
+                resetAppState()
+            }, 3000)
         }
-        // Stan początkowy
-        stopButton.isEnabled = false
-        startButton.isEnabled = hasRequiredPermissions() // Włączony tylko jeśli są uprawnienia
+    }
+
+
+    private fun logNavigationButtonClick(eventType: String, pointIndex: Int, targetPoint: MapPoint?) {
+        // Pobierz aktualny timestamp
+        val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.getDefault()).format(java.util.Date())
+
+        // Przygotuj dane punktu jako stringi
+        val coordXString = targetPoint?.x?.toString() ?: "NULL"
+        val coordYString = targetPoint?.y?.toString() ?: "NULL"
+
+        // Stwórz tablicę stringów z wszystkimi danymi
+        val logEntry = arrayOf(
+            timestamp,          // Index 0: Timestamp
+            eventType,          // Index 1: Typ zdarzenia
+            pointIndex.toString(), // Index 2: Index punktu jako string
+            coordXString,       // Index 3: Współrzędna X jako string
+            coordYString        // Index 4: Współrzędna Y jako string
+        )
+
+        // Dodaj tablicę do listy allData
+        allData.add(logEntry)
+
+        Log.d(TAG, "Zalogowano kliknięcie do allData: ${logEntry.joinToString()}") // Loguj do Logcat dla debugowania
+    }
+
+    private fun resetAppState() {
+        // Zresetuj zmienne śledzące trasę
+        this.selectedRoute = null
+        this.currentPointIndex = -1
+
+        // Ustaw przyciski do stanu początkowego
+        startButton.visibility = View.VISIBLE
+        startButton.isEnabled = false // Znowu wyłączony
+        nextButton.visibility = View.GONE
+        stopButton.visibility = View.GONE
+
+        // Ustaw stan aplikacji na IDLE
+        currentAppState = AppState.IDLE
+        Log.d(TAG, "Stan aplikacji: ${currentAppState}. Reset zakończony.")
+
+        // Wyczyść wyświetlanie trasy na RouteOverlayView
+        routeOverlayView.clearRoute() // Wywołaj metodę RouteOverlayView do czyszczenia
     }
 
     private fun showCreateRouteFragment() {
@@ -746,7 +931,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 
     // --- Kontrola Logowania ---
 
-    private fun startLogging() {
+    private fun startLogging(route: Route) {
         if (isLogging) {
             Log.w(TAG, "Logowanie jest już aktywne.")
             return
@@ -802,8 +987,10 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
             Log.w(TAG, "Brak sensora barometru.")
             Toast.makeText(this, "Brak sensora barometru.", Toast.LENGTH_SHORT).show()
         }
+
+        val safeRouteName = route.name.replace(Regex("[^a-zA-Z0-9-_.]"), "_")
         val timestampFolder = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-        val folderName = "log_$timestampFolder"
+        val folderName = "${safeRouteName}_log_$timestampFolder"
         // Tworzymy ścieżkę względną wymaganą przez MediaStore
         // np. "Download/log_20250405_183000"
         val relativeFolderPath = Environment.DIRECTORY_DOWNLOADS + "/" + folderName
@@ -825,6 +1012,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         gyroscopeData.clear()
         magnetometerData.clear()
         barometerData.clear()
+        allData.clear()
         wifiData.add(arrayOf("Timestamp", "scanType", "BSSID", "SSID", "RSSI", "Frequency"))
         bleData.add(arrayOf("Timestamp", "scanType", "DeviceName", "DeviceAddress", "RSSI"))
         accelerometerData.add(arrayOf("Timestamp", "scanType", "AccX", "AccY", "AccZ"))
@@ -977,51 +1165,6 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
     }
 
 
-    // --- Pobieranie Lokalizacji ---
-    /**
-     * Pobiera aktualną najlepszą dostępną lokalizację precyzyjną i przybliżoną.
-     * Zwraca parę: Pair(Pair(latFine, lonFine), Pair(latCoarse, lonCoarse))
-     * Wartości będą "0.0" jeśli lokalizacja nie jest dostępna lub brak uprawnień.
-     */
-    private fun getCurrentLocationData(): Pair<Pair<String, String>, Pair<String, String>> {
-        var latFine = "0.0"
-        var lonFine = "0.0"
-        var latCoarse = "0.0"
-        var lonCoarse = "0.0"
-
-        // Lokalizacja Precyzyjna (z mapy)
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-            locationOverlay.myLocation?.let {
-                latFine = it.latitude.toString()
-                lonFine = it.longitude.toString()
-            } ?: Log.w(TAG, "Lokalizacja precyzyjna: brak fixa (locationOverlay.myLocation is null).")
-        } else {
-            Log.w(TAG, "Lokalizacja precyzyjna: brak uprawnień.")
-        }
-
-        // Lokalizacja Przybliżona (z LocationManager)
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-            try {
-                val coarseLoc: Location? = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
-                    ?: locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER) // Fallback na GPS
-                    ?: locationManager.getLastKnownLocation(LocationManager.PASSIVE_PROVIDER) // Ostateczny fallback
-
-                coarseLoc?.let {
-                    latCoarse = it.latitude.toString()
-                    lonCoarse = it.longitude.toString()
-                } ?: Log.w(TAG, "Lokalizacja przybliżona: brak fixa (getLastKnownLocation zwrócił null).")
-            } catch (se: SecurityException) {
-                Log.e(TAG, "Lokalizacja przybliżona: SecurityException.", se)
-                // To nie powinno się zdarzyć, jeśli checkSelfPermission przeszedł
-            }
-        } else {
-            Log.w(TAG, "Lokalizacja przybliżona: brak uprawnień.")
-        }
-
-        return Pair(Pair(latFine, lonFine), Pair(latCoarse, lonCoarse))
-    }
-
-
     // --- Obsługa Skanowania WiFi ---
     private fun triggerWifiScan(): Boolean {
         // Sprawdź uprawnienia i stan WiFi
@@ -1076,7 +1219,6 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
             }
 
             val timestamp = SimpleDateFormat("MMddHHmmss.SSS", Locale.getDefault()).format(Date())
-            val (fineLoc, coarseLoc) = getCurrentLocationData()
 
             scanResults.forEach { result ->
                 if (!result.BSSID.isNullOrEmpty()) {
@@ -1086,9 +1228,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                         result.BSSID,
                         result.SSID ?: "<Brak SSID>",
                         result.level.toString(),
-                        result.frequency.toString(),
-                        //fineLoc.first, fineLoc.second,
-                        //coarseLoc.first, coarseLoc.second,
+                        result.frequency.toString()
                     )
                     wifiData.add(data)
                     allData.add(data)
@@ -1217,7 +1357,6 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         val deviceAddress = result.device.address ?: "<Brak adresu>"
         val rssi = result.rssi.toString()
         val timestamp = SimpleDateFormat("MMddHHmmss.SSS", Locale.getDefault()).format(Date())
-        val (fineLoc, coarseLoc) = getCurrentLocationData()
 
         Log.v(TAG, "BLE: Znaleziono urządzenie: Adres=${deviceAddress}, Nazwa=${deviceName}, RSSI=${rssi}") // Użyj Verbose dla częstych logów
 
@@ -1227,8 +1366,6 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
             deviceName,
             deviceAddress,
             rssi,
-            //fineLoc.first, fineLoc.second,
-            //coarseLoc.first, coarseLoc.second,
         )
         bleData.add(data)
         allData.add(data)
@@ -1265,7 +1402,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         if (!isLogging || event == null) return // Ignoruj, jeśli nie logujemy lub zdarzenie jest null
 
         val timestamp = SimpleDateFormat("MMddHHmmss.SSS", Locale.getDefault()).format(Date())
-        val (fineLoc, coarseLoc) = getCurrentLocationData()
+
 
         when (event.sensor.type) {
             Sensor.TYPE_ACCELEROMETER -> {
@@ -1278,9 +1415,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                     "Accelerometer",
                     x.toString(),
                     y.toString(),
-                    z.toString(),
-//                    fineLoc.first, fineLoc.second,
-//                    coarseLoc.first, coarseLoc.second,
+                    z.toString()
                 )
                 accelerometerData.add(data)
                 allData.add(data)
@@ -1295,9 +1430,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                     "Gyroscope",
                     x.toString(),
                     y.toString(),
-                    z.toString(),
-//                    fineLoc.first, fineLoc.second,
-//                    coarseLoc.first, coarseLoc.second,
+                    z.toString()
                 )
                 gyroscopeData.add(data)
                 allData.add(data)
@@ -1313,8 +1446,6 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                     x.toString(),
                     y.toString(),
                     z.toString(),
-//                    fineLoc.first, fineLoc.second,
-//                    coarseLoc.first, coarseLoc.second,
                 )
                 magnetometerData.add(data)
                 allData.add(data)
@@ -1324,9 +1455,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                 //Log.v(TAG, "Barometr: Ciśnienie=$pressure")
                 val data = arrayOf(
                     timestamp,
-                    pressure.toString(),
-//                    fineLoc.first, fineLoc.second,
-//                    coarseLoc.first, coarseLoc.second,
+                    pressure.toString()
                     )
                 barometerData.add(data)
             }
