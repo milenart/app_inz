@@ -41,19 +41,20 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
 import java.io.BufferedReader
 import java.io.IOException
 import java.io.InputStreamReader
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import pl.pw.epicgameproject.MapPoint
-import pl.pw.epicgameproject.ScreenPoint
 import android.graphics.BitmapFactory
+import androidx.appcompat.widget.Toolbar
+import android.view.Menu
+import android.view.MenuItem
+import androidx.fragment.app.FragmentManager
 
 
-class MainActivity : AppCompatActivity(), SensorEventListener {
+class MainActivity : AppCompatActivity(), SensorEventListener, FragmentManager.OnBackStackChangedListener {
 
     // --- Deklaracje widoków z nowego layoutu ---
     private lateinit var floorPlanImageView: ImageView
@@ -61,8 +62,11 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
     private lateinit var startButton: Button
     private lateinit var nextButton: Button
     private lateinit var stopButton: Button
-    private lateinit var selectRouteButton: Button
-    private lateinit var createRouteButton: Button
+
+    //    private lateinit var selectRouteButton: Button
+//    private lateinit var createRouteButton: Button
+//    private lateinit var deleteRouteButton: Button
+    private lateinit var toolbar: Toolbar
 
 
     // Przykladowa sciezka
@@ -221,17 +225,20 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
     }
 
 
-
     // --- Cykl Życia Aktywności ---
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         Log.d(TAG, "onCreate called")
 
+        // Rejestracja Listenera dla zmiany widoku
+        supportFragmentManager.addOnBackStackChangedListener(this)
+
         // Inicjalizacja Managerów
         wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
         locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
-        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager // Inicjalizacja SensorManager
+        sensorManager =
+            getSystemService(Context.SENSOR_SERVICE) as SensorManager // Inicjalizacja SensorManager
 
         // Inicjalizacja Bluetooth
         val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
@@ -251,9 +258,15 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         magnetometerSensor = sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)
         barometerSensor = sensorManager.getDefaultSensor(Sensor.TYPE_PRESSURE)
 
-        if (accelerometerSensor == null) Log.w(TAG, "Sensor przyspieszenia (ACCELEROMETER) nie znaleziony!")
+        if (accelerometerSensor == null) Log.w(
+            TAG,
+            "Sensor przyspieszenia (ACCELEROMETER) nie znaleziony!"
+        )
         if (gyroscopeSensor == null) Log.w(TAG, "Sensor żyroskopu (GYROSCOPE) nie znaleziony!")
-        if (magnetometerSensor == null) Log.w(TAG, "Sensor pola magnetycznego (MAGNETIC_FIELD) nie znaleziony!")
+        if (magnetometerSensor == null) Log.w(
+            TAG,
+            "Sensor pola magnetycznego (MAGNETIC_FIELD) nie znaleziony!"
+        )
         if (barometerSensor == null) Log.w(TAG, "Sensor ciśnienia (PRESSURE) nie znaleziony!")
 
         // Rejestracja Odbiornika WiFi
@@ -269,13 +282,17 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         floorPlanImageView = findViewById(R.id.floorPlanImageView)
         floorPlanImageView.setImageResource(R.drawable.gmach_f0_01)
         routeOverlayView = findViewById(R.id.routeOverlayView)
-
+        toolbar = findViewById(R.id.toolbar)
 
         startButton = findViewById(R.id.startButton)
         nextButton = findViewById(R.id.nextButton)
         stopButton = findViewById(R.id.stopButton)
-        selectRouteButton = findViewById(R.id.selectRouteButton)
-        createRouteButton = findViewById(R.id.buttonShowCreateRoute)
+//        selectRouteButton = findViewById(R.id.selectRouteButton)
+//        createRouteButton = findViewById(R.id.buttonShowCreateRoute)
+//        deleteRouteButton = findViewById(R.id.deleteRouteButton)
+
+        setSupportActionBar(toolbar)
+        supportActionBar?.setTitle("Pomiar Trasy")
 
         // Ustawienie Komponentów UI ekranu głównego
         setupMainButtons()
@@ -294,15 +311,12 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         routes = routes + staticRoute
 
 
-        // utworzenie sciezki w pozniejszej fazie zamiana na wybor sciezki
-        //displayGeographicRoute(geographicRoutePoints)
-
         // --- Inicjowanie widoku dla tworzenia trasy
         val inflater = LayoutInflater.from(this)
         val createRouteView = inflater.inflate(R.layout.create_route_view, null)
 
         // Dodaj go do głównego layoutu (np. FrameLayout)
-        val mainLayout = findViewById<FrameLayout>(R.id.mainFrame)
+        val mainLayout = findViewById<FrameLayout>(R.id.mainContentContainer)
         mainLayout.addView(createRouteView)
 
         // Na początku ukryj ten widok
@@ -320,7 +334,10 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
             if (bitmap != null) {
                 bitmapWidth = bitmap.width // Pobieramy szerokość z obiektu Bitmapy
                 bitmapHeight = bitmap.height // Pobieramy wysokość z obiektu Bitmapy
-                Log.i(TAG, "ORYGINALNE wymiary Bitmapy (z BitmapFactory.Options): $bitmapWidth x $bitmapHeight")
+                Log.i(
+                    TAG,
+                    "ORYGINALNE wymiary Bitmapy (z BitmapFactory.Options): $bitmapWidth x $bitmapHeight"
+                )
 
                 // Możesz teraz ustawić tę bitmapę na ImageView, jeśli nie robiłeś tego wcześniej.
                 // floorPlanImageView.setImageBitmap(bitmap) // Upewnij się, że ImageView dostaje obraz
@@ -331,7 +348,10 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                 // Ale skoro wcześniej używałeś setImageResource, po prostu kontynuuj z wymiarami.
 
             } else {
-                Log.e(TAG, "Nie udało się wczytać bitmapy z opcjami, aby uzyskać oryginalne wymiary. Wymiary bitmapy nieznane.")
+                Log.e(
+                    TAG,
+                    "Nie udało się wczytać bitmapy z opcjami, aby uzyskać oryginalne wymiary. Wymiary bitmapy nieznane."
+                )
                 // Obsłuż błąd - np. pokaż Toast, wyłącz funkcjonalność mapową
                 bitmapWidth = 0 // Ustaw na 0, żeby uniemożliwić dalsze obliczenia
                 bitmapHeight = 0
@@ -343,53 +363,58 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         }
         // nasluchwianie rezultatow z CreateRouteFragment
         supportFragmentManager.setFragmentResultListener("route_saved_key", this) { requestKey, bundle ->
-            // Ten kod wykona się, gdy Fragment wyśle wynik z kluczem "route_saved_key"
-            val isSaved = bundle.getBoolean("route_saved_success", false) // Odczytujemy dane z Bundle
+            // Ta lambda (funkcja anonimowa) zostanie wywołana, gdy Fragment wyśle rezultat z tym kluczem
 
-            if (isSaved) {
-                // --- TUTAJ PRZEŁADOWUJEMY LISTĘ TRAS ---
+            Log.d(TAG, "Fragment result received z kluczem: $requestKey")
+
+            // Sprawdź, czy rezultat wskazuje na pomyślny zapis (zakładając, że Fragment wysyła boolean "route_saved_success")
+            val success = bundle.getBoolean("route_saved_success", false) // Domyślnie false
+
+            if (success) {
+                Log.d(TAG, "Rezultat: Trasa zapisana pomyślnie. Przeładowuję trasy i resetuję UI.")
+
+                // Przeładuj listę tras z pliku po zapisie
                 routes = RouteStorage.loadRoutes(this)
                 Log.d(TAG, "Trasy przeładowane po zapisie Fragmentu. Liczba tras: ${routes.size}")
-                // Opcjonalnie: Poinformuj użytkownika lub zaktualizuj UI głównego ekranu
-                // Toast.makeText(this, "Lista tras odświeżona.", Toast.LENGTH_SHORT).show()
 
-                // Tutaj możesz też odświeżyć np. przycisk wyboru trasy, jeśli wyświetla liczbę tras itp.
-                // if (routes.isNotEmpty()) { selectRouteButton.isEnabled = true } // Przykład
+                resetAppState() // <-- TO POWINNO PRZYWRÓCIĆ WIDOCZNOŚĆ PRZYCISKU START
+
             } else {
-                Log.w(TAG, "Fragment zgłosił wynik, ale zapis nie powiódł się?")
+                Log.w(TAG, "Rezultat: Zapis trasy niepowodzenie lub brak flagi sukcesu.")
+                resetAppState() // Wróć do stanu głównego UI nawet przy błędzie zapisu
             }
         }
     }
 
 
-     /**
+    /**
      * Przelicza współrzędne mapy (np. EPSG:2178) na współrzędne pikselowe obrazu.
      * Zakłada, że parametry A, B, C, D, E, F zostały wcześniej wczytane z pliku world file.
      * Używa uproszczonego wzoru dla obrazów nieobróconych (B=0, D=0).
      * Zwraca obiekt Point(x, y) z koordynatami pikselowymi lub null w przypadku błędu.
      */
-     private fun mapToPixel(mapX: Double, mapY: Double): ScreenPoint? {
-         if (!worldFileLoaded) {
-             Log.e(TAG, "Cannot perform mapToPixel: World file parameters not loaded.")
-             return null
-         }
+    private fun mapToPixel(mapX: Double, mapY: Double): ScreenPoint? {
+        if (!worldFileLoaded) {
+            Log.e(TAG, "Cannot perform mapToPixel: World file parameters not loaded.")
+            return null
+        }
 
-         // Sprawdzenie czy wyznacznik nie jest zbyt bliski zeru (czyli transformacja odwracalna)
-         val denominator = paramA * paramE - paramB * paramD
-         if (kotlin.math.abs(denominator) < 1e-12) {
-             Log.e(TAG, "Cannot perform mapToPixel: Transformation matrix is not invertible.")
-             return null
-         }
+        // Sprawdzenie czy wyznacznik nie jest zbyt bliski zeru (czyli transformacja odwracalna)
+        val denominator = paramA * paramE - paramB * paramD
+        if (kotlin.math.abs(denominator) < 1e-12) {
+            Log.e(TAG, "Cannot perform mapToPixel: Transformation matrix is not invertible.")
+            return null
+        }
 
-         // Pełny wzór odwrotnej transformacji affine
-         val deltaX = mapX - paramC
-         val deltaY = mapY - paramF
+        // Pełny wzór odwrotnej transformacji affine
+        val deltaX = mapX - paramC
+        val deltaY = mapY - paramF
 
-         val pixelX = (paramE * deltaX - paramB * deltaY) / denominator
-         val pixelY = (paramA * deltaY - paramD * deltaX) / denominator
+        val pixelX = (paramE * deltaX - paramB * deltaY) / denominator
+        val pixelY = (paramA * deltaY - paramD * deltaX) / denominator
 
-         return ScreenPoint(pixelX.toFloat(), pixelY.toFloat())
-     }
+        return ScreenPoint(pixelX.toFloat(), pixelY.toFloat())
+    }
 
 
     /**
@@ -400,16 +425,27 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
      * @param routeToDisplay The Route object to display, or null to clear the display.
      * Assumes points within this Route are Point(Double, Double) raw map coordinates.
      */
-    fun displayGeographicRoute(routeToDisplay: Route?, currentTargetIndex: Int = -1) { // Przyjmuje Route (z MapPoint)
-        val routeOverlayView = findViewById<RouteOverlayView>(R.id.routeOverlayView) // Pobierz widok
+    fun displayGeographicRoute(
+        routeToDisplay: Route?,
+        currentTargetIndex: Int = -1
+    ) { // Przyjmuje Route (z MapPoint)
+        val routeOverlayView =
+            findViewById<RouteOverlayView>(R.id.routeOverlayView) // Pobierz widok
 
         // 1. Obsługa przypadku null i brak PGW
         if (routeToDisplay == null || !worldFileLoaded) {
             if (routeToDisplay == null) Log.i(TAG, "Attempting to clear route display.")
-            if (!worldFileLoaded) Log.e(TAG, "Cannot display route: World file parameters not loaded.")
+            if (!worldFileLoaded) Log.e(
+                TAG,
+                "Cannot display route: World file parameters not loaded."
+            )
             // Wyczyść przekazując puste listy ScreenPoint i MarkerState do RouteOverlayView
             routeOverlayView.setScreenRouteData(emptyList(), emptyList())
-            if (!worldFileLoaded) Toast.makeText(this, "Błąd: Parametry mapy nie wczytane.", Toast.LENGTH_SHORT).show()
+            if (!worldFileLoaded) Toast.makeText(
+                this,
+                "Błąd: Parametry mapy nie wczytane.",
+                Toast.LENGTH_SHORT
+            ).show()
             return
         }
 
@@ -422,10 +458,16 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
             Log.d(TAG, "--- Rozpoczęcie Konwersji dla trasy: ${routeToDisplay?.name} ---")
 
             // Loguj WSZYSTKIE PARAMETRY PGW używane w mapToPixel
-            Log.d(TAG, "PGW Parametry: A=$paramA, B=$paramB, C=$paramC, D=$paramD, E=$paramE, F=$paramF")
+            Log.d(
+                TAG,
+                "PGW Parametry: A=$paramA, B=$paramB, C=$paramC, D=$paramD, E=$paramE, F=$paramF"
+            )
 
             // Loguj WYMIARY używane w convertToScreenCoordinates
-            Log.d(TAG, "Wymiary używane w konwersji: Bitmapa (${this.bitmapWidth}x${this.bitmapHeight}), Widok (${routeOverlayView.width}x${routeOverlayView.height})")
+            Log.d(
+                TAG,
+                "Wymiary używane w konwersji: Bitmapa (${this.bitmapWidth}x${this.bitmapHeight}), Widok (${routeOverlayView.width}x${routeOverlayView.height})"
+            )
 
             if (routeOverlayView.width > 0 && routeOverlayView.height > 0 && bitmapWidth > 0 && bitmapHeight > 0) {
                 // Te listy będą przechowywać ScreenPoint (piksele ekranu) i stany do przekazania do RouteOverlayView
@@ -434,13 +476,16 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 
 
                 // --- ITERUJEMY PRZEZ MARKERY W PRZEKAZANYM OBIEKCIE ROUTE (z MapPoint(Double, Double)) ---
-                for ((index, marker) in routeToDisplay.markers.withIndex()){
+                for ((index, marker) in routeToDisplay.markers.withIndex()) {
                     // Pobieramy SUROWE współrzędne mapowe (Double) z MapPoint w Markeri
                     val mapPoint_double = marker.point // To jest MapPoint(Double, Double)
                     val mapX_double = mapPoint_double.x // Double
                     val mapY_double = mapPoint_double.y // Double
 
-                    Log.d(TAG, "Konwersja Punktu: Surowe Double ($mapX_double, $mapY_double)") // Debugowanie
+                    Log.d(
+                        TAG,
+                        "Konwersja Punktu: Surowe Double ($mapX_double, $mapY_double)"
+                    ) // Debugowanie
 
 
                     // Etap 1: Surowe Double -> Piksele obrazu mapy PNG (ScreenPoint)
@@ -448,7 +493,10 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                     val imagePixelPoint_float = mapToPixel(mapX_double, mapY_double)
 
                     if (imagePixelPoint_float != null) {
-                        Log.d(TAG, "  mapToPixel -> Piksele Obrazu PNG (${imagePixelPoint_float.x}, ${imagePixelPoint_float.y})") // Debugowanie
+                        Log.d(
+                            TAG,
+                            "  mapToPixel -> Piksele Obrazu PNG (${imagePixelPoint_float.x}, ${imagePixelPoint_float.y})"
+                        ) // Debugowanie
 
                         // Etap 2: Piksele obrazu mapy PNG (ScreenPoint) -> Piksele ekranu (ScreenPoint)
                         // convertToScreenCoordinates przyjmuje Float, więc bierzemy x/y z ScreenPoint z mapToPixel
@@ -461,7 +509,10 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                             viewHeight = routeOverlayView.height // Rzeczywiste wymiary widoku
                         )
 
-                        Log.d(TAG, "  convertToScreenCoordinates -> Piksele Ekranu (${screenPoint_float.x}, ${screenPoint_float.y})") // Debugowanie
+                        Log.d(
+                            TAG,
+                            "  convertToScreenCoordinates -> Piksele Ekranu (${screenPoint_float.x}, ${screenPoint_float.y})"
+                        ) // Debugowanie
 
                         val state = when {
                             index <= currentTargetIndex -> MarkerState.VISITED // Punkty przed celem są odwiedzone
@@ -475,7 +526,10 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 //                        screenPixelPoints.add(screenPoint_float) // Dodajemy ScreenPoint (piksele ekranu)
 //                        markerStatesForDrawing.add(marker.state) // Dodajemy odpowiadający stan
                     } else {
-                        Log.w(TAG, "Could not convert map point (${mapX_double}, ${mapY_double}) to image pixel (mapToPixel returned null).")
+                        Log.w(
+                            TAG,
+                            "Could not convert map point (${mapX_double}, ${mapY_double}) to image pixel (mapToPixel returned null)."
+                        )
                     }
                 }
 
@@ -484,19 +538,29 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                     // Przekazujemy gotowe listy ScreenPoint (piksele ekranu) i MarkerState do RouteOverlayView
                     routeOverlayView.setScreenRouteData(screenPixelPoints, markerStatesForDrawing)
 
-                    Log.i(TAG, "Route '${routeToDisplay.name}' processed (${routeToDisplay.markers.size} MapPoints) and set for display (${screenPixelPoints.size} ScreenPoints).")
+                    Log.i(
+                        TAG,
+                        "Route '${routeToDisplay.name}' processed (${routeToDisplay.markers.size} MapPoints) and set for display (${screenPixelPoints.size} ScreenPoints)."
+                    )
                 } else {
-                    Log.w(TAG, "No valid screen pixel points could be created for route '${routeToDisplay.name}'. Clearing display.")
+                    Log.w(
+                        TAG,
+                        "No valid screen pixel points could be created for route '${routeToDisplay.name}'. Clearing display."
+                    )
                     routeOverlayView.clearRoute() // Użyj metody do czyszczenia
                 }
 
             } else {
                 // Logujemy, jeśli blok performConversionAndSet został wywołany, ale wymiary były 0
-                Log.e(TAG, "performRouteDisplay called but view or bitmap dimensions are not available! " +
-                        "View: ${routeOverlayView.width}x${routeOverlayView.height}, " +
-                        "Bitmap: ${bitmapWidth}x${bitmapHeight}")
+                Log.e(
+                    TAG,
+                    "performRouteDisplay called but view or bitmap dimensions are not available! " +
+                            "View: ${routeOverlayView.width}x${routeOverlayView.height}, " +
+                            "Bitmap: ${bitmapWidth}x${bitmapHeight}"
+                )
                 routeOverlayView.clearRoute() // Wyczyść na wszelki wypadek
-                Toast.makeText(this, "Błąd: Wymiary widoku mapy niedostępne.", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Błąd: Wymiary widoku mapy niedostępne.", Toast.LENGTH_SHORT)
+                    .show()
             }
         }
         // --- KONIEC BLOKU performConversionAndSet ---
@@ -506,11 +570,17 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         // Sprawdź, czy widok ma wymiary (jest gotowy po layoucie)
         if (routeOverlayView.width > 0 && routeOverlayView.height > 0) {
             // Jeśli widok ma już wymiary, od razu wykonaj przeliczenie i rysowanie
-            Log.d(TAG, "View already laid out. Performing route display immediately for '${routeToDisplay.name}'.")
+            Log.d(
+                TAG,
+                "View already laid out. Performing route display immediately for '${routeToDisplay.name}'."
+            )
             performConversionAndSet()
         } else {
             // Jeśli widok nie ma jeszcze wymiarów, dodaj listenera, żeby poczekać na layout
-            Log.d(TAG, "View not yet laid out. Adding OnGlobalLayoutListener for '${routeToDisplay.name}'.")
+            Log.d(
+                TAG,
+                "View not yet laid out. Adding OnGlobalLayoutListener for '${routeToDisplay.name}'."
+            )
             routeOverlayView.viewTreeObserver.addOnGlobalLayoutListener(
                 object : ViewTreeObserver.OnGlobalLayoutListener {
                     override fun onGlobalLayout() {
@@ -518,13 +588,17 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                         routeOverlayView.viewTreeObserver.removeOnGlobalLayoutListener(this)
 
                         // Teraz, gdy widok ma wymiary, wykonaj przeliczenie i rysowanie
-                        Log.d(TAG, "Layout finished. Performing route display from listener for '${routeToDisplay.name}'.")
+                        Log.d(
+                            TAG,
+                            "Layout finished. Performing route display from listener for '${routeToDisplay.name}'."
+                        )
                         performConversionAndSet()
                     }
                 }
             )
         }
     }
+
     private fun convertToScreenCoordinates(
         bitmapX: Float,
         bitmapY: Float,
@@ -560,12 +634,19 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                                     params.add(line.toDouble())
                                     Log.d(TAG, "Read line $i: $line")
                                 } catch (e: NumberFormatException) {
-                                    Log.e(TAG, "Error parsing line $i ('$line') to Double in $filename", e)
+                                    Log.e(
+                                        TAG,
+                                        "Error parsing line $i ('$line') to Double in $filename",
+                                        e
+                                    )
                                     worldFileLoaded = false
                                     return // Przerwij wczytywanie przy błędzie formatu
                                 }
                             } else {
-                                Log.e(TAG, "Error reading line $i from $filename: Unexpected end of file")
+                                Log.e(
+                                    TAG,
+                                    "Error reading line $i from $filename: Unexpected end of file"
+                                )
                                 worldFileLoaded = false
                                 return // Przerwij, jeśli plik jest za krótki
                             }
@@ -583,20 +664,32 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                 paramF = params[5]
                 worldFileLoaded = true
                 Log.i(TAG, "World file '$filename' loaded successfully.")
-                Log.d(TAG, "Params: A=$paramA, B=$paramB, C=$paramC, D=$paramD, E=$paramE, F=$paramF")
+                Log.d(
+                    TAG,
+                    "Params: A=$paramA, B=$paramB, C=$paramC, D=$paramD, E=$paramE, F=$paramF"
+                )
 
                 // Sprawdzenie czy obraz nie jest obrócony (B i D bliskie zeru)
                 if (kotlin.math.abs(paramB) > 1e-9 || kotlin.math.abs(paramD) > 1e-9) {
-                    Log.w(TAG, "World file indicates image rotation (B or D is non-zero). Simple transformation formula might be inaccurate.")
+                    Log.w(
+                        TAG,
+                        "World file indicates image rotation (B or D is non-zero). Simple transformation formula might be inaccurate."
+                    )
                 }
                 // Sprawdzenie czy E jest ujemne
                 if (paramE >= 0) {
-                    Log.w(TAG, "Parameter E (line 4) is non-negative ($paramE). This is unusual for north-up images. Pixel Y coordinate might be inverted.")
+                    Log.w(
+                        TAG,
+                        "Parameter E (line 4) is non-negative ($paramE). This is unusual for north-up images. Pixel Y coordinate might be inverted."
+                    )
                 }
 
             } else {
                 // To się nie powinno zdarzyć jeśli pętla przeszła 6 razy
-                Log.e(TAG, "Error loading $filename: Incorrect number of parameters read (${params.size})")
+                Log.e(
+                    TAG,
+                    "Error loading $filename: Incorrect number of parameters read (${params.size})"
+                )
                 worldFileLoaded = false
             }
 
@@ -608,13 +701,28 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 
     override fun onResume() {
         super.onResume()
-        Log.d(TAG, "onResume called")
-        // Jeśli logowanie było aktywne, można rozważyć jego wznowienie,
-        // ale obecna logika zatrzymuje je w onPause, co jest bezpieczniejsze bez usługi pierwszoplanowej.
-        // Jeśli sensory były zarejestrowane (isLogging = true), zarejestruj je ponownie.
-        if (isLogging) {
-            registerSensors() // Rejestrujemy sensory ponownie, jeśli logowanie było aktywne
+        Log.d(TAG, "=== onResume called ===") // Log na początku onResume
+
+        val backStackCount = supportFragmentManager.backStackEntryCount
+        Log.d(TAG, "onResume: supportFragmentManager.backStackEntryCount = $backStackCount")
+
+        // Sprawdź, czy wróciliśmy do głównego layoutu Activity
+        if (backStackCount == 0) {
+            Log.d(TAG, "onResume: Stos wstecz jest pusty (count = 0). Przygotowuję się do resetu UI.")
+            // Wywołaj metodę resetującą stan UI
+            resetAppState() // <-- WYWOŁANIE resetAppState()
+            Log.d(TAG, "onResume: resetAppState() wywołane.")
+
+        } else {
+            Log.d(TAG, "onResume: Stos wstecz ma $backStackCount elementów. Fragment jest prawdopodobnie nadal widoczny.")
+            // Upewnij się, że przyciski nawigacyjne są ukryte, jeśli Fragment jest widoczny
+            startButton.visibility = View.GONE
+            nextButton.visibility = View.GONE
+            stopButton.visibility = View.GONE
+            Log.d(TAG, "onResume: Przyciski nawigacyjne ustawione na GONE.")
         }
+        Log.d(TAG, "=== Koniec onResume ===") // Log na końcu onResume
+
     }
 
     override fun onPause() {
@@ -634,6 +742,29 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         }
     }
 
+    override fun onBackStackChanged() {
+        Log.d(TAG, "onBackStackChanged called. Current back stack count: ${supportFragmentManager.backStackEntryCount}")
+
+        // Sprawdź, czy stos wstecz jest pusty.
+        // Gdy count == 0, oznacza to, że wróciliśmy do głównego layoutu Activity.
+        if (supportFragmentManager.backStackEntryCount == 0) {
+            Log.d(TAG, "onBackStackChanged: Stos wstecz jest pusty. Resetuję stan UI.")
+            // Wywołaj metodę resetującą stan UI
+            resetAppState() // <-- WYWOŁAJ resetAppState() KIEDY STOS PUSTY
+            Log.d(TAG, "onBackStackChanged: resetAppState() wywołane.")
+        }
+        // Jeśli count > 0, oznacza to, że jakiś fragment jest na stosie (lub właśnie został dodany/usunięty,
+        // ale nadal jest inny fragment na wierzchu), więc przyciski nawigacyjne powinny być ukryte.
+        else {
+            // Możesz dodać logowanie, jeśli chcesz potwierdzić, że ten blok też jest wywoływany
+            Log.d(TAG, "onBackStackChanged: Stos wstecz nie jest pusty. Pozostaję w stanie Fragmentu.")
+            // Upewnij się, że przyciski są ukryte, jeśli stos nie jest pusty
+            startButton.visibility = View.GONE
+            nextButton.visibility = View.GONE
+            stopButton.visibility = View.GONE
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         Log.d(TAG, "onDestroy called")
@@ -648,6 +779,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
             stopLoggingInternal(saveData = false) // Zatrzymujemy bez zapisu, jeśli onDestroy jest wywołane niespodziewanie
         }
         handler.removeCallbacksAndMessages(null) // Dodatkowe zabezpieczenie
+        supportFragmentManager.removeOnBackStackChangedListener(this)
     }
 
     private fun setupMainButtons() {
@@ -658,49 +790,14 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         nextButton.visibility = View.GONE
         stopButton.visibility = View.GONE
 
-        createRouteButton.setOnClickListener {
-            showCreateRouteFragment()
-        }
-
-
-        selectRouteButton.setOnClickListener {
-            if (routes.isEmpty()) {
-                Toast.makeText(this, "Brak zapisanych tras", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-
-            val routeNames = routes.map { it.name }.toTypedArray()
-
-            AlertDialog.Builder(this)
-                .setTitle("Wybierz trasę")
-                .setItems(routeNames) { dialog, which ->
-                    val selectedRoute = routes[which]
-
-                    this.selectedRoute = selectedRoute
-                    startButton.isEnabled = true
-
-                    currentAppState = AppState.ROUTE_SELECTED
-                    Log.d(TAG, "Stan aplikacji: ${currentAppState}")
-
-                    this.currentPointIndex = -1
-
-                    // Wyświetl trasę
-                    displayGeographicRoute(selectedRoute, this.currentPointIndex)
-                    //routeOverlayView.setRoute(selectedRoute)
-
-                    Toast.makeText(this, "Wybrano trasę: ${this.selectedRoute?.name}", Toast.LENGTH_SHORT).show()
-
-                    dialog.dismiss()
-                }
-                .setNegativeButton("Anuluj", null)
-                .show()
-        }
-
 
         startButton.setOnClickListener {
             // Sprawdź, czy jesteśmy w stanie ROUTE_SELECTED
             if (currentAppState != AppState.ROUTE_SELECTED || this.selectedRoute == null || this.selectedRoute!!.markers.isEmpty()) {
-                Log.w(TAG, "Przycisk Start kliknięty w nieoczekiwanym stanie (${currentAppState}) lub brak trasy.")
+                Log.w(
+                    TAG,
+                    "Przycisk Start kliknięty w nieoczekiwanym stanie (${currentAppState}) lub brak trasy."
+                )
                 resetAppState()
                 return@setOnClickListener
             }
@@ -721,16 +818,16 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                 nextButton.visibility = View.VISIBLE
                 stopButton.visibility = View.GONE
                 currentAppState = AppState.STARTED // Stan: rozpoczęta, Dalej widoczny
-                Log.d(TAG, "Stan aplikacji: ${currentAppState}. Rozpoczęto nawigację (punkt 0), pokaż Dalej.")
-                Toast.makeText(this, "Nawigacja rozpoczęta (punkt 0)!", Toast.LENGTH_SHORT).show()
+                Log.d(
+                    TAG,
+                    "Stan aplikacji: ${currentAppState}. Rozpoczęto nawigację (punkt 0), pokaż Dalej."
+                )
             } else {
                 // Trasa ma tylko 1 punkt. Po Start od razu przechodzimy do stanu Gotowy do Stop.
                 // Przycisk Stop jest od razu widoczny.
                 nextButton.visibility = View.GONE
                 stopButton.visibility = View.VISIBLE
                 currentAppState = AppState.READY_FOR_STOP // Stan: gotowa do Stop (przy 1 punkcie)
-                Log.d(TAG, "Stan aplikacji: ${currentAppState}. Trasa ma tylko 1 punkt. Gotowa do Stop.")
-                Toast.makeText(this, "Trasa ma tylko 1 punkt. Kliknij Stop.", Toast.LENGTH_SHORT).show()
             }
 
             // --- Zaktualizuj wyświetlanie trasy na overlay ---
@@ -771,14 +868,6 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 
                 // Zaktualizuj stan aplikacji
                 currentAppState = AppState.READY_FOR_STOP
-                Log.d(TAG, "Stan aplikacji: ${currentAppState}. Dotarto do przedostatniego punktu (${this.currentPointIndex}).")
-
-                Toast.makeText(this, "Dotarto do przedostatniego punktu!", Toast.LENGTH_SHORT).show()
-
-            } else {
-                // Nadal są kolejne punkty do przejścia
-                Log.d(TAG, "Nawigowanie do punktu index ${this.currentPointIndex}.")
-                Toast.makeText(this, "Idź do następnego punktu", Toast.LENGTH_SHORT).show()
             }
         }
 
@@ -789,7 +878,10 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
             // currentPointIndex W TYM MOMENCIE wskazuje na index PRZEDOSTATNIEGO punktu (size - 2),
             // ponieważ ostatnie kliknięcie Dalej ustawiło go na size - 2 i zmieniło przycisk na Stop.
             if (currentAppState != AppState.READY_FOR_STOP || this.selectedRoute == null) {
-                Log.w(TAG, "Przycisk Stop kliknięty w nieoczekiwanym stanie (${currentAppState}) lub brak trasy.")
+                Log.w(
+                    TAG,
+                    "Przycisk Stop kliknięty w nieoczekiwanym stanie (${currentAppState}) lub brak trasy."
+                )
                 // W przypadku błędu, resetujemy do stanu początkowego
                 resetAppState() // Wywołaj resetAppState() w przypadku NIEOCZEKIWANEGO STANU
                 return@setOnClickListener
@@ -804,7 +896,8 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 
             // --- ZALOGUJ KLIKNIĘCIE STOP ---
             // Zaloguj zdarzenie "STOP", index OSTATNIEGO potwierdzonego punktu (currentPointIndex), i jego współrzędne
-            val arrivedPoint = route.markers.getOrNull(this.currentPointIndex)?.point // Punkt currentPointIndex (index ostatniego punktu)
+            val arrivedPoint =
+                route.markers.getOrNull(this.currentPointIndex)?.point // Punkt currentPointIndex (index ostatniego punktu)
             logNavigationButtonClick("STOP", this.currentPointIndex, arrivedPoint)
 
             Log.i(TAG, "Nawigacja zakończona dla trasy: ${route.name}.")
@@ -820,10 +913,70 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         }
     }
 
+    private fun showDeleteConfirmationDialog(routeNameToDelete: String) {
+        AlertDialog.Builder(this)
+            .setTitle("Potwierdź usunięcie")
+            .setMessage("Czy na pewno chcesz usunąć trasę '$routeNameToDelete'? Tej operacji nie można cofnąć.")
+            .setPositiveButton("Usuń") { dialog, which ->
+                // --- Logika USUWANIA po potwierdzeniu ---
+                Log.d(TAG, "Potwierdzono usunięcie trasy: $routeNameToDelete")
+                // Wywołaj funkcję obsługującą usuwanie trasy (ta, którą częściowo już masz)
+                handleDeleteRoute(routeNameToDelete) // TODO: Upewnij się, że ta funkcja działa poprawnie (wywołuje RouteStorage.deleteRoute, przeładowuje listę, resetuje UI)
 
-    private fun logNavigationButtonClick(eventType: String, pointIndex: Int, targetPoint: MapPoint?) {
+                // Po usunięciu, UI głównego ekranu zostanie zaktualizowane przez handleDeleteRoute,
+                // a dialog potwierdzenia zamknie się automatycznie.
+            }
+            .setNegativeButton("Anuluj", null) // Przygotuj przycisk Anuluj
+            .setIcon(android.R.drawable.ic_dialog_alert) // Opcjonalnie: dodaj ikonę ostrzeżenia
+            .show()
+    }
+
+    private fun handleDeleteRoute(routeName: String) {
+        try {
+            // 1. Usuń trasę z pamięci trwałej
+            RouteStorage.deleteRoute(this, routeName)
+
+            // 2. Przeładuj listę tras w MainActivity
+            routes = RouteStorage.loadRoutes(this)
+            Log.d(TAG, "Trasy przeładowane po usunięciu. Liczba tras: ${routes.size}")
+
+
+            // 3. Sprawdź, czy usunięto aktualnie wybraną/wyświetlaną trasę
+            // Porównaj po nazwie, bo obiekt selectedRoute może wskazywać na starą wersję
+            if (selectedRoute != null && selectedRoute?.name == routeName) {
+                Log.d(TAG, "Usunięto aktualnie wybraną trasę '${routeName}'. Resetowanie UI.")
+                // Jeśli usunięto aktualną trasę, zresetuj stan aplikacji i UI.
+                resetAppState() // Ta metoda już czyści overlay i przywraca stan IDLE/przyciski początkowe
+                Toast.makeText(
+                    this,
+                    "Usunięto aktualnie wyświetlaną trasę: $routeName",
+                    Toast.LENGTH_SHORT
+                ).show()
+            } else {
+                // Usunięto inną trasę. Wystarczy poinformować użytkownika.
+                Log.d(TAG, "Usunięto trasę '${routeName}' (nieaktualnie wybraną).")
+                Toast.makeText(this, "Usunięto trasę: $routeName", Toast.LENGTH_SHORT).show()
+            }
+
+            // Opcjonalnie: Jeśli dialog wyboru jest nadal otwarty, można go odświeżyć,
+            // ale obecna logika zamyka dialog po kliknięciu, więc to nie jest problem.
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Błąd podczas usuwania trasy: $routeName", e)
+            Toast.makeText(this, "Błąd podczas usuwania trasy: $routeName", Toast.LENGTH_SHORT)
+                .show()
+            // W przypadku błędu, lista 'routes' w MainActivity może być nieaktualna.
+            // Można rozważyć przeładowanie jej nawet tutaj: routes = RouteStorage.loadRoutes(this)
+        }
+    }
+
+    private fun logNavigationButtonClick(
+        eventType: String,
+        pointIndex: Int,
+        targetPoint: MapPoint?
+    ) {
         // Pobierz aktualny timestamp
-        val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.getDefault()).format(java.util.Date())
+        val timestamp = SimpleDateFormat("MMddHHmmss.SSS", Locale.getDefault()).format(Date())
 
         // Przygotuj dane punktu jako stringi
         val coordXString = targetPoint?.x?.toString() ?: "NULL"
@@ -841,17 +994,22 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         // Dodaj tablicę do listy allData
         allData.add(logEntry)
 
-        Log.d(TAG, "Zalogowano kliknięcie do allData: ${logEntry.joinToString()}") // Loguj do Logcat dla debugowania
+        Log.d(
+            TAG,
+            "Zalogowano kliknięcie do allData: ${logEntry.joinToString()}"
+        ) // Loguj do Logcat dla debugowania
     }
 
     private fun resetAppState() {
+
+        supportActionBar?.setTitle("Pomiar Trasy")
         // Zresetuj zmienne śledzące trasę
         this.selectedRoute = null
         this.currentPointIndex = -1
 
         // Ustaw przyciski do stanu początkowego
         startButton.visibility = View.VISIBLE
-        startButton.isEnabled = false // Znowu wyłączony
+        startButton.isEnabled = false
         nextButton.visibility = View.GONE
         stopButton.visibility = View.GONE
 
@@ -863,29 +1021,6 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         routeOverlayView.clearRoute() // Wywołaj metodę RouteOverlayView do czyszczenia
     }
 
-    private fun showCreateRouteFragment() {
-        val fragmentManager = supportFragmentManager
-        val fragmentTransaction = fragmentManager.beginTransaction()
-
-        // Opcjonalnie: Animacje
-        fragmentTransaction.setCustomAnimations(
-            android.R.anim.slide_in_left,
-            android.R.anim.slide_out_right,
-            android.R.anim.slide_in_left,
-            android.R.anim.slide_out_right
-        )
-
-        val createRouteFragment = CreateRouteFragment()
-
-        // Zastąp zawartość kontenera mainFrame naszym Fragmentem
-        fragmentTransaction.replace(R.id.mainFrame, createRouteFragment)
-
-        // Dodaj do stosu powrotu, żeby przycisk wstecz działał
-        fragmentTransaction.addToBackStack(null)
-
-        // Zatwierdź zmiany
-        fragmentTransaction.commit()
-    }
 
     // --- Obsługa Uprawnień ---
     private fun hasRequiredPermissions(): Boolean {
@@ -907,7 +1042,11 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         }
     }
 
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQUEST_PERMISSIONS_CODE) {
             val granted = hasRequiredPermissions()
@@ -917,13 +1056,19 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                 Toast.makeText(this, "Uprawnienia przyznane.", Toast.LENGTH_SHORT).show()
                 // Sprawdź ponownie stan Bluetooth po przyznaniu uprawnień
                 if (bluetoothAdapter == null || !bluetoothAdapter!!.isEnabled) {
-                    Toast.makeText(this, "Pamiętaj, aby włączyć Bluetooth.", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, "Pamiętaj, aby włączyć Bluetooth.", Toast.LENGTH_LONG)
+                        .show()
                 } else if (bluetoothLeScanner == null) {
-                    bluetoothLeScanner = bluetoothAdapter?.bluetoothLeScanner // Spróbuj ponownie zainicjować skaner
+                    bluetoothLeScanner =
+                        bluetoothAdapter?.bluetoothLeScanner // Spróbuj ponownie zainicjować skaner
                 }
             } else {
                 Log.w(TAG, "Not all required permissions were granted.")
-                Toast.makeText(this, "Nie przyznano wszystkich wymaganych uprawnień. Funkcjonalność ograniczona.", Toast.LENGTH_LONG).show()
+                Toast.makeText(
+                    this,
+                    "Nie przyznano wszystkich wymaganych uprawnień. Funkcjonalność ograniczona.",
+                    Toast.LENGTH_LONG
+                ).show()
             }
         }
     }
@@ -939,7 +1084,8 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         // Sprawdź ponownie uprawnienia
         if (!hasRequiredPermissions()) {
             Log.e(TAG, "Nie można rozpocząć logowania - brak uprawnień.")
-            Toast.makeText(this, "Brak uprawnień do rozpoczęcia logowania.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Brak uprawnień do rozpoczęcia logowania.", Toast.LENGTH_SHORT)
+                .show()
             requestMissingPermissions()
             return
         }
@@ -957,21 +1103,27 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         }
         if (!bluetoothAdapter!!.isEnabled) {
             Log.e(TAG, "Nie można rozpocząć skanowania BLE - Bluetooth wyłączony.")
-            Toast.makeText(this, "Włącz Bluetooth, aby skanować urządzenia BLE.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                this,
+                "Włącz Bluetooth, aby skanować urządzenia BLE.",
+                Toast.LENGTH_SHORT
+            ).show()
             // Można zdecydować czy kontynuować tylko z WiFi/krokami, czy zatrzymać
             return // Zablokuj start, jeśli BLE jest wymagane
         }
         if (bluetoothLeScanner == null) {
-            bluetoothLeScanner = bluetoothAdapter?.bluetoothLeScanner // Spróbuj ponownie zainicjować
+            bluetoothLeScanner =
+                bluetoothAdapter?.bluetoothLeScanner // Spróbuj ponownie zainicjować
             if (bluetoothLeScanner == null) {
                 Log.e(TAG, "Nie można uzyskać BluetoothLeScanner.")
-                Toast.makeText(this, "Nie można zainicjować skanera BLE.", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Nie można zainicjować skanera BLE.", Toast.LENGTH_SHORT)
+                    .show()
                 return
             }
         }
 
         // Sprawdź sensory
-        if (accelerometerSensor  == null) {
+        if (accelerometerSensor == null) {
             Log.w(TAG, "Brak sensora accelerometru.")
             Toast.makeText(this, "Brak sensora accelerometru.", Toast.LENGTH_SHORT).show()
         }
@@ -989,7 +1141,8 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         }
 
         val safeRouteName = route.name.replace(Regex("[^a-zA-Z0-9-_.]"), "_")
-        val timestampFolder = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+        val timestampFolder =
+            SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
         val folderName = "${safeRouteName}_log_$timestampFolder"
         // Tworzymy ścieżkę względną wymaganą przez MediaStore
         // np. "Download/log_20250405_183000"
@@ -1019,7 +1172,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         gyroscopeData.add(arrayOf("Timestamp", "scanType", "GyroX", "GyroY", "GyroZ"))
         magnetometerData.add(arrayOf("Timestamp", "scanType", "MagX", "MagY", "MagZ"))
         barometerData.add(arrayOf("Timestamp", "scanType", "Pressure"))
-        
+
 
         // Start skanowania WiFi
         if (wifiManager.isWifiEnabled) {
@@ -1039,7 +1192,6 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         Toast.makeText(this, "Rozpoczęto logowanie.", Toast.LENGTH_SHORT).show()
     }
 
-    // Funkcja pomocnicza do zatrzymywania wewnętrznych procesów logowania
     private fun stopLoggingInternal(saveData: Boolean) {
         if (!isLogging) {
             // Już zatrzymane lub nigdy nie uruchomione
@@ -1067,7 +1219,8 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                     writeCsvData(this, wifiData, "wifi_log", targetPath)
                 } catch (e: IOException) {
                     Log.e(TAG, "Błąd zapisu pliku CSV dla WiFi", e)
-                    Toast.makeText(this, "Błąd zapisu danych WiFi: ${e.message}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, "Błąd zapisu danych WiFi: ${e.message}", Toast.LENGTH_LONG)
+                        .show()
                 }
             } else {
                 Log.i(TAG, "Brak danych WiFi do zapisania.")
@@ -1079,7 +1232,8 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                     writeCsvData(this, bleData, "ble_log", targetPath)
                 } catch (e: IOException) {
                     Log.e(TAG, "Błąd zapisu pliku CSV dla BLE", e)
-                    Toast.makeText(this, "Błąd zapisu danych BLE: ${e.message}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, "Błąd zapisu danych BLE: ${e.message}", Toast.LENGTH_LONG)
+                        .show()
                 }
             } else {
                 Log.i(TAG, "Brak danych BLE do zapisania.")
@@ -1090,7 +1244,11 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                     writeCsvData(this, accelerometerData, "accelerometer_log", targetPath)
                 } catch (e: IOException) {
                     Log.e(TAG, "Błąd zapisu pliku CSV dla akcelerometru", e)
-                    Toast.makeText(this, "Błąd zapisu danych akcelerometru: ${e.message}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(
+                        this,
+                        "Błąd zapisu danych akcelerometru: ${e.message}",
+                        Toast.LENGTH_LONG
+                    ).show()
                 }
             } else {
                 Log.i(TAG, "Brak danych z akcelerometru do zapisania.")
@@ -1102,7 +1260,11 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                     writeCsvData(this, gyroscopeData, "gyroscope_log", targetPath)
                 } catch (e: IOException) {
                     Log.e(TAG, "Błąd zapisu pliku CSV dla żyroskopu", e)
-                    Toast.makeText(this, "Błąd zapisu danych żyroskopu: ${e.message}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(
+                        this,
+                        "Błąd zapisu danych żyroskopu: ${e.message}",
+                        Toast.LENGTH_LONG
+                    ).show()
                 }
             } else {
                 Log.i(TAG, "Brak danych z żyroskopu do zapisania.")
@@ -1114,7 +1276,11 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                     writeCsvData(this, magnetometerData, "magnetometer_log", targetPath)
                 } catch (e: IOException) {
                     Log.e(TAG, "Błąd zapisu pliku CSV dla magnetometru", e)
-                    Toast.makeText(this, "Błąd zapisu danych magnetometru: ${e.message}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(
+                        this,
+                        "Błąd zapisu danych magnetometru: ${e.message}",
+                        Toast.LENGTH_LONG
+                    ).show()
                 }
             } else {
                 Log.i(TAG, "Brak danych z magnetometru do zapisania.")
@@ -1126,7 +1292,11 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                     writeCsvData(this, barometerData, "barometer_log", targetPath)
                 } catch (e: IOException) {
                     Log.e(TAG, "Błąd zapisu pliku CSV dla barometru", e)
-                    Toast.makeText(this, "Błąd zapisu danych barometru: ${e.message}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(
+                        this,
+                        "Błąd zapisu danych barometru: ${e.message}",
+                        Toast.LENGTH_LONG
+                    ).show()
                 }
             } else {
                 Log.i(TAG, "Brak danych z barometru do zapisania.")
@@ -1137,14 +1307,22 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                     writeCsvData(this, allData, "allData", targetPath)
                 } catch (e: IOException) {
                     Log.e(TAG, "Błąd zapisu pliku CSV dla allData", e)
-                    Toast.makeText(this, "Błąd zapisu danych allData: ${e.message}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(
+                        this,
+                        "Błąd zapisu danych allData: ${e.message}",
+                        Toast.LENGTH_LONG
+                    ).show()
                 }
             } else {
                 Log.i(TAG, "Brak danych z allData do zapisania.")
             }
 
 
-            Toast.makeText(this, "Zatrzymano logowanie. Dane zapisane (jeśli zebrano).", Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                this,
+                "Zatrzymano logowanie. Dane zapisane (jeśli zebrano).",
+                Toast.LENGTH_SHORT
+            ).show()
         } else {
             Toast.makeText(this, "Zatrzymano logowanie (bez zapisu).", Toast.LENGTH_SHORT).show()
         }
@@ -1158,27 +1336,41 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         barometerData.clear()
     }
 
-
     private fun stopLogging() {
-        Log.i(TAG,"Wywołano stopLogging (z zapisem).")
+        Log.i(TAG, "Wywołano stopLogging (z zapisem).")
         stopLoggingInternal(saveData = true) // Zatrzymaj i zapisz dane
     }
 
 
     // --- Obsługa Skanowania WiFi ---
+
     private fun triggerWifiScan(): Boolean {
         // Sprawdź uprawnienia i stan WiFi
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_WIFI_STATE) != PackageManager.PERMISSION_GRANTED ||
-            ContextCompat.checkSelfPermission(this, Manifest.permission.CHANGE_WIFI_STATE) != PackageManager.PERMISSION_GRANTED || // Potrzebne do startScan
-            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED ||
-            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+        if (ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_WIFI_STATE
+            ) != PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.CHANGE_WIFI_STATE
+            ) != PackageManager.PERMISSION_GRANTED || // Potrzebne do startScan
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
             Log.w(TAG, "WiFi: Próba skanowania bez wystarczających uprawnień.")
             stopLoggingInternal(saveData = false)
             return false
         }
         if (!wifiManager.isWifiEnabled) {
             Log.w(TAG, "WiFi: Próba skanowania przy wyłączonym WiFi.")
-            Toast.makeText(this, "WiFi wyłączone, skanowanie WiFi pominięte.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "WiFi wyłączone, skanowanie WiFi pominięte.", Toast.LENGTH_SHORT)
+                .show()
             return false
         }
 
@@ -1186,7 +1378,10 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
             Log.d(TAG, "WiFi: Wywołanie wifiManager.startScan()")
             val started = wifiManager.startScan()
             if (!started) {
-                Log.w(TAG, "WiFi: wifiManager.startScan() zwrócił false. Skanowanie nie zostało zainicjowane (możliwe throttlowanie).")
+                Log.w(
+                    TAG,
+                    "WiFi: wifiManager.startScan() zwrócił false. Skanowanie nie zostało zainicjowane (możliwe throttlowanie)."
+                )
             }
             started
         } catch (se: SecurityException) {
@@ -1201,9 +1396,19 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 
     private fun processWifiScanResults() {
         // Sprawdź uprawnienie przed dostępem do wyników
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_WIFI_STATE) != PackageManager.PERMISSION_GRANTED ||
-            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED ||
-            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+        if (ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_WIFI_STATE
+            ) != PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
             Log.e(TAG, "WiFi: Brak uprawnień do pobrania wyników skanowania.")
             stopLoggingInternal(saveData = false)
             return
@@ -1247,28 +1452,46 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 
 
     // --- Obsługa Skanowania BLE ---
+
     private fun startBleScan() {
         if (!isLogging) return // Nie startuj, jeśli logowanie zostało zatrzymane
 
         // Sprawdź uprawnienia specyficzne dla BLE
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.BLUETOOTH_SCAN
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
                 Log.e(TAG, "BLE: Brak uprawnienia BLUETOOTH_SCAN.")
-                Toast.makeText(this,"Brak uprawnienia do skanowania BLE.",Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Brak uprawnienia do skanowania BLE.", Toast.LENGTH_SHORT)
+                    .show()
                 stopLoggingInternal(false) // Zatrzymaj, bo kluczowe uprawnienie brakuje
                 return
             }
         } else {
             // Starsze wersje wymagają BLUETOOTH_ADMIN i lokalizacji (już sprawdzane w startLogging)
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_ADMIN) != PackageManager.PERMISSION_GRANTED) {
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.BLUETOOTH_ADMIN
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
                 Log.e(TAG, "BLE: Brak uprawnienia BLUETOOTH_ADMIN.")
-                Toast.makeText(this,"Brak uprawnienia admina Bluetooth.",Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Brak uprawnienia admina Bluetooth.", Toast.LENGTH_SHORT)
+                    .show()
                 stopLoggingInternal(false)
                 return
             }
         }
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            Log.w(TAG, "BLE: Brak uprawnienia ACCESS_FINE_LOCATION - skanowanie może nie działać poprawnie.")
+        if (ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            Log.w(
+                TAG,
+                "BLE: Brak uprawnienia ACCESS_FINE_LOCATION - skanowanie może nie działać poprawnie."
+            )
             // Skanowanie może nadal działać bez lokalizacji, ale często jest wymagane
             // Toast.makeText(this,"Brak uprawnienia lokalizacji, skanowanie BLE może być ograniczone.",Toast.LENGTH_LONG).show()
         }
@@ -1301,19 +1524,31 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
             bluetoothLeScanner?.startScan(scanFilters, scanSettings, bleScanCallback)
         } catch (se: SecurityException) {
             Log.e(TAG, "BLE: SecurityException podczas startScan.", se)
-            Toast.makeText(this, "Błąd uprawnień przy starcie skanowania BLE.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Błąd uprawnień przy starcie skanowania BLE.", Toast.LENGTH_SHORT)
+                .show()
             stopLoggingInternal(false)
         } catch (e: Exception) {
             Log.e(TAG, "BLE: Wyjątek podczas startScan.", e)
-            Toast.makeText(this, "Nieoczekiwany błąd przy starcie skanowania BLE.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                this,
+                "Nieoczekiwany błąd przy starcie skanowania BLE.",
+                Toast.LENGTH_SHORT
+            ).show()
         }
     }
 
     private fun stopBleScan() {
         // Sprawdź uprawnienia przed próbą zatrzymania
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
-                Log.w(TAG, "BLE: Brak uprawnienia BLUETOOTH_SCAN do zatrzymania skanowania (ale próbuję).")
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.BLUETOOTH_SCAN
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                Log.w(
+                    TAG,
+                    "BLE: Brak uprawnienia BLUETOOTH_SCAN do zatrzymania skanowania (ale próbuję)."
+                )
                 // Teoretycznie stopScan może nie wymagać uprawnienia, ale lepiej być ostrożnym
             }
         }
@@ -1337,8 +1572,15 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         // Potrzebne uprawnienie CONNECT do pobrania nazwy na API 31+
         var deviceName = "<Brak nazwy>"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-                Log.w(TAG, "BLE: Brak uprawnienia BLUETOOTH_CONNECT, nie można pobrać nazwy urządzenia ${result.device.address}.")
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.BLUETOOTH_CONNECT
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                Log.w(
+                    TAG,
+                    "BLE: Brak uprawnienia BLUETOOTH_CONNECT, nie można pobrać nazwy urządzenia ${result.device.address}."
+                )
                 deviceName = "<Brak uprawnień>"
             }
         }
@@ -1348,7 +1590,11 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                 // Sprawdzenie uprawnienia BLUETOOTH (ogólne) lub CONNECT (API 31+) jest niejawnie wymagane przez getName()
                 deviceName = result.device.name ?: "<Brak nazwy>"
             } catch (se: SecurityException) {
-                Log.w(TAG, "BLE: SecurityException przy próbie pobrania nazwy dla ${result.device.address}.", se)
+                Log.w(
+                    TAG,
+                    "BLE: SecurityException przy próbie pobrania nazwy dla ${result.device.address}.",
+                    se
+                )
                 deviceName = "<Brak uprawnień>"
             }
         }
@@ -1358,7 +1604,10 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         val rssi = result.rssi.toString()
         val timestamp = SimpleDateFormat("MMddHHmmss.SSS", Locale.getDefault()).format(Date())
 
-        Log.v(TAG, "BLE: Znaleziono urządzenie: Adres=${deviceAddress}, Nazwa=${deviceName}, RSSI=${rssi}") // Użyj Verbose dla częstych logów
+        Log.v(
+            TAG,
+            "BLE: Znaleziono urządzenie: Adres=${deviceAddress}, Nazwa=${deviceName}, RSSI=${rssi}"
+        ) // Użyj Verbose dla częstych logów
 
         val data = arrayOf(
             timestamp,
@@ -1373,6 +1622,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 
 
     // --- Obsługa Sensorów ---
+
     private fun registerSensors() {
 
         val samplingRate = SensorManager.SENSOR_DELAY_NORMAL
@@ -1420,6 +1670,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                 accelerometerData.add(data)
                 allData.add(data)
             }
+
             Sensor.TYPE_GYROSCOPE -> {
                 val x = event.values[0]
                 val y = event.values[1]
@@ -1435,6 +1686,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                 gyroscopeData.add(data)
                 allData.add(data)
             }
+
             Sensor.TYPE_MAGNETIC_FIELD -> {
                 val x = event.values[0]
                 val y = event.values[1]
@@ -1450,13 +1702,14 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                 magnetometerData.add(data)
                 allData.add(data)
             }
+
             Sensor.TYPE_PRESSURE -> {
                 val pressure = event.values[0]
                 //Log.v(TAG, "Barometr: Ciśnienie=$pressure")
                 val data = arrayOf(
                     timestamp,
                     pressure.toString()
-                    )
+                )
                 barometerData.add(data)
             }
         }
@@ -1469,9 +1722,13 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 
 
     // --- Zapis do Plików CSV (Uogólniona funkcja) ---
-// Dodajemy nowy parametr: relativeDirectoryPath
     @Throws(IOException::class)
-    private fun writeCsvData(context: Context, dataList: List<Array<String>>, filePrefix: String, relativeDirectoryPath: String) {
+    private fun writeCsvData(
+        context: Context,
+        dataList: List<Array<String>>,
+        filePrefix: String,
+        relativeDirectoryPath: String
+    ) {
         if (dataList.size <= 1) {
             Log.i(TAG, "Brak danych do zapisania dla prefiksu: $filePrefix.")
             return
@@ -1482,12 +1739,20 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
             Log.e(TAG, "Ścieżka względna do zapisu jest pusta! Zapisuję bezpośrednio w Downloads.")
             // Można tu albo przerwać, albo zapisać domyślnie w Downloads
             // W tym przykładzie zapiszemy w Downloads jako fallback
-            writeCsvData(context, dataList, filePrefix, Environment.DIRECTORY_DOWNLOADS) // Wywołanie rekurencyjne z domyślną ścieżką
+            writeCsvData(
+                context,
+                dataList,
+                filePrefix,
+                Environment.DIRECTORY_DOWNLOADS
+            ) // Wywołanie rekurencyjne z domyślną ścieżką
             return
         }
 
 
-        Log.d(TAG, "Próba zapisu ${dataList.size} wierszy do CSV dla prefiksu: $filePrefix w folderze: $relativeDirectoryPath")
+        Log.d(
+            TAG,
+            "Próba zapisu ${dataList.size} wierszy do CSV dla prefiksu: $filePrefix w folderze: $relativeDirectoryPath"
+        )
         val resolver = context.contentResolver
         val timestampFile = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
         // Nazwa pliku pozostaje taka sama (prefix + timestamp)
@@ -1507,7 +1772,11 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
             // Używamy nadal EXTERNAL_CONTENT_URI, bo RELATIVE_PATH określa lokalizację
             resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
         } catch (e: Exception) {
-            Log.e(TAG, "Nie udało się utworzyć wpisu MediaStore dla $displayName w $relativeDirectoryPath.", e)
+            Log.e(
+                TAG,
+                "Nie udało się utworzyć wpisu MediaStore dla $displayName w $relativeDirectoryPath.",
+                e
+            )
             Toast.makeText(context, "Błąd tworzenia pliku $displayName.", Toast.LENGTH_LONG).show()
             null
         }
@@ -1527,7 +1796,10 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                         writer.append("\n")
                     }
                     writer.flush()
-                    Log.i(TAG, "Pomyślnie zapisano ${dataList.size} wierszy do $displayName w $relativeDirectoryPath.")
+                    Log.i(
+                        TAG,
+                        "Pomyślnie zapisano ${dataList.size} wierszy do $displayName w $relativeDirectoryPath."
+                    )
                     success = true
                 }
                 /*
@@ -1537,16 +1809,25 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 
             } ?: run {
                 Log.e(TAG, "Nie udało się otworzyć strumienia wyjściowego dla URI: $uri")
-                Toast.makeText(context, "Błąd zapisu pliku $displayName (nie można otworzyć strumienia).", Toast.LENGTH_LONG).show()
+                Toast.makeText(
+                    context,
+                    "Błąd zapisu pliku $displayName (nie można otworzyć strumienia).",
+                    Toast.LENGTH_LONG
+                ).show()
             }
         } catch (e: IOException) {
             // ... (obsługa błędów bez zmian) ...
             Log.e(TAG, "IOException podczas zapisu pliku CSV $displayName", e)
-            Toast.makeText(context, "Błąd I/O podczas zapisu $displayName.", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, "Błąd I/O podczas zapisu $displayName.", Toast.LENGTH_LONG)
+                .show()
         } catch (e: Exception) {
             // ... (obsługa błędów bez zmian) ...
             Log.e(TAG, "Nieoczekiwany wyjątek podczas zapisu pliku CSV $displayName", e)
-            Toast.makeText(context, "Nieoczekiwany błąd podczas zapisu $displayName.", Toast.LENGTH_LONG).show()
+            Toast.makeText(
+                context,
+                "Nieoczekiwany błąd podczas zapisu $displayName.",
+                Toast.LENGTH_LONG
+            ).show()
         } finally {
             // ... (finalne operacje na MediaStore - bez zmian, logika zależy od 'success' i 'uri') ...
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -1556,30 +1837,166 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                     if (success) {
                         resolver.update(uri, contentValues, null, null)
                     } else {
-                        Log.w(TAG, "Zapis nie powiódł się, usuwanie wpisu MediaStore dla $displayName.")
+                        Log.w(
+                            TAG,
+                            "Zapis nie powiódł się, usuwanie wpisu MediaStore dla $displayName."
+                        )
                         resolver.delete(uri, null, null)
                     }
                 } catch (e: Exception) {
-                    Log.w(TAG, "Nie udało się zaktualizować/usunąć stanu IS_PENDING dla $displayName.", e)
+                    Log.w(
+                        TAG,
+                        "Nie udało się zaktualizować/usunąć stanu IS_PENDING dla $displayName.",
+                        e
+                    )
                 }
             } else if (!success && uri != null) {
-                Log.w(TAG, "Zapis $displayName nie powiódł się na starszym API. Plik może pozostać niekompletny.")
+                Log.w(
+                    TAG,
+                    "Zapis $displayName nie powiódł się na starszym API. Plik może pozostać niekompletny."
+                )
             }
         }
     }
 
+    override fun onCreateOptionsMenu(menu: Menu?): Boolean {
+        menuInflater.inflate(R.menu.menu_main, menu)
+        return true // Zwróć true, żeby menu było wyświetlone
+    }
 
-    // Funkcja udostępniania (jeśli potrzebna, można wywołać np. z nowego przycisku)
-    // Obecnie nie jest używana, ale pozostawiona na wszelki wypadek.
-    // Należałoby ją dostosować do wyboru, które dane udostępnić (WiFi, BLE, kroki?)
-    private fun shareTextResults() {
-        // ... implementacja udostępniania tekstu ...
-        // Przykład dla danych WiFi:
-        if (wifiData.size <= 1) {
-            Toast.makeText(this, "Brak danych WiFi do udostępnienia.", Toast.LENGTH_SHORT).show()
+    // --- DODAJ METODY DO OBSŁUGI MENU TOOLBAR ---
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        // Logika obsługi kliknięć w zależności od ID elementu menu
+        return when (item.itemId) {
+            R.id.action_select_route -> {
+                // Logika przycisku "Wybierz Trasę"
+                handleSelectRouteAction() // Wywołaj metodę z logiką wyboru
+                true // Zwróć true, żeby system wiedział, że kliknięcie zostało obsłużone
+            }
+
+            R.id.action_add_route -> {
+                // Logika przycisku "Dodaj trasę"
+                handleCreateRouteAction() // Wywołaj metodę z logiką dodawania
+                true
+            }
+
+            R.id.action_delete_route -> {
+                // Logika przycisku "Usuń Trasę"
+                handleDeleteRouteAction() // Wywołaj metodę z logiką usuwania (otwierającą dialog usuwania)
+                true
+            }
+
+            else -> super.onOptionsItemSelected(item) // Obsłuż inne kliknięcia w menu (np. przycisk "home")
+        }
+    }
+
+    private fun handleSelectRouteAction() {
+        // Przeładuj trasy przed pokazaniem dialogu wyboru
+        routes = RouteStorage.loadRoutes(this)
+        Log.d(
+            TAG,
+            "Przeładowano trasy przed pokazaniem dialogu wyboru (z Toolbar). Liczba tras: ${routes.size}"
+        )
+
+        if (routes.isEmpty()) {
+            Toast.makeText(this, "Brak zapisanych tras do wyboru.", Toast.LENGTH_SHORT).show()
             return
         }
-        // ... reszta kodu z shareTextResults jak w oryginale, ale działająca na wifiData ...
-        Log.w(TAG,"Funkcja shareTextResults nie została w pełni zaimplementowana dla wielu typów danych.")
+
+        val routeNames = routes.map { it.name }.toTypedArray()
+
+        AlertDialog.Builder(this)
+            .setTitle("Wybierz trasę do wyświetlenia")
+            .setItems(routeNames) { dialog, which ->
+                val selectedRouteFromDialog = routes[which]
+                supportActionBar?.setTitle(selectedRouteFromDialog.name)
+
+                this.selectedRoute = selectedRouteFromDialog
+                startButton.isEnabled = true
+
+                currentAppState = AppState.ROUTE_SELECTED
+                Log.d(
+                    TAG,
+                    "Stan aplikacji: ${currentAppState}. Wybrano trasę: ${selectedRouteFromDialog.name}"
+                )
+
+                this.currentPointIndex = -1
+                Log.d(TAG, "Dialog wyboru: Wywołuję displayGeographicRoute dla trasy: ${this.selectedRoute?.name}, index: ${this.currentPointIndex}")
+
+                displayGeographicRoute(this.selectedRoute, this.currentPointIndex)
+
+
+
+                dialog.dismiss()
+            }
+            .setNegativeButton("Anuluj", null)
+            .show()
     }
+
+    private fun handleCreateRouteAction() {
+        // Skopiuj całą logikę z wnętrza starego listenera buttonShowCreateRoute.setOnClickListener tutaj
+        // Ta logika powinna otwierać Fragment do tworzenia trasy.
+        Log.d(TAG, "Akcja 'Dodaj trasę' z Toolbar kliknięta.")
+
+        // Ukryj przyciski nawigacyjne i clearRouteButton podczas tworzenia trasy
+        startButton.visibility = View.GONE
+        nextButton.visibility = View.GONE
+        stopButton.visibility = View.GONE
+
+
+        // Wyczyść wyświetlanie trasy na overlay podczas tworzenia nowej trasy
+        routeOverlayView.clearRoute()
+
+        // Otwórz fragment do tworzenia trasy
+        val fragment = CreateRouteFragment()
+        supportFragmentManager.beginTransaction()
+            .replace(
+                R.id.mainContentContainer,
+                fragment
+            )
+            .addToBackStack(null)
+            .commit()
+    }
+
+    private fun handleDeleteRouteAction() {
+        // Skopiuj całą logikę z wnętrza starego listenera deleteRouteButton.setOnClickListener tutaj
+        // Ta logika powinna wczytywać trasy i pokazywać dialog USUWANIA (listę tras do usunięcia).
+
+        Log.d(TAG, "Akcja 'Usuń Trasę' z Toolbar kliknięta.")
+
+        // Przeładuj trasy przed pokazaniem dialogu usuwania
+        routes = RouteStorage.loadRoutes(this)
+        Log.d(
+            TAG,
+            "Przeładowano trasy przed pokazaniem dialogu usuwania (z Toolbar). Liczba tras: ${routes.size}"
+        )
+
+
+        if (routes.isEmpty()) {
+            Toast.makeText(this, "Brak zapisanych tras do usunięcia.", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val routeNames = routes.map { it.name }.toTypedArray()
+
+        // Pokaż dialog z listą tras do usunięcia
+        AlertDialog.Builder(this)
+            .setTitle("Wybierz trasę do usunięcia")
+            .setItems(routeNames) { dialog, which ->
+                // which to indeks wybranej trasy w liście 'routes'
+                val routeToDeleteName = routes[which].name
+
+                // --- Pokaż dialog POTWIERDZENIA usunięcia ---
+                showDeleteConfirmationDialog(routeToDeleteName) // Wywołaj metodę do pokazania dialogu potwierdzenia
+
+                dialog.dismiss() // Zamknij dialog z listą tras
+            }
+            .setNegativeButton("Anuluj", null)
+            .show()
+
+        // TODO: Upewnij się, że metoda showDeleteConfirmationDialog(routeNameToDelete: String) jest zaimplementowana
+        // i że jej pozytywny przycisk wywołuje handleDeleteRoute(routeNameToDelete).
+    }
+
 }

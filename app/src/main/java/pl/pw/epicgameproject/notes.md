@@ -15,5 +15,3 @@ WiFi:
 TODO:
     2. Częstsze skany wifi - Lipka
     3. dodanie logiki usowania trasy
-    4. musisz sprawdzic jak dokladnie dziala zmienianie kolorów markerów bo coś jest chyba nie tak
-
