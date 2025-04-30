@@ -5,6 +5,7 @@ package pl.pw.epicgameproject
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.ContentResolver
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -15,8 +16,10 @@ import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
+import android.widget.Spinner
 import android.widget.Toast
 import androidx.fragment.app.Fragment
 import java.io.BufferedReader
@@ -24,44 +27,91 @@ import java.io.IOException
 import java.io.InputStreamReader
 
 private const val PICK_CSV_FILE_FRAGMENT = 3
+private const val TAG_FRAGMENT = "CreateRouteFragment" // Tag do logowania we Fragmentcie
 
 class CreateRouteFragment : Fragment() {
+
     private lateinit var buttonImportCsv: Button
     private lateinit var editTextRouteName: EditText
     private lateinit var editTextCoordX: EditText
     private lateinit var editTextCoordY: EditText
     private lateinit var buttonAddPoint: Button
     private lateinit var buttonConfirmRoute: Button
+    private lateinit var spinnerFloor: Spinner // Spinner wyboru piętra
 
-    // Lista do przechowywania zebranych SUROWYCH PUNKTÓW MAPOWYCH
-    private val collectedMapPoints = mutableListOf<MapPoint>() // Lista MapPoint
+    private var availableFloors: IntArray = intArrayOf() // Tablica dostępnych pięter przekazana z Activity
 
+    // Lista do przechowywania zebranych markerów trasy (ręcznie lub z CSV) przed zapisem
+    private val tempRouteMarkers = mutableListOf<Marker>() // <-- Zmieniono nazwę na bardziej jasną i usunięto collectedMapPoints
+
+
+    // onCreateView: Nadmuchuje layout Fragmentu.
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View? {
-        // Nadmuchaj układ dla tego Fragmentu
-        val view = inflater.inflate(R.layout.create_route_view, container, false)
+        // Nadmuchaj layout dla tego fragmentu
+        return inflater.inflate(R.layout.create_route_view, container, false)
+    }
 
-        // Znajdź elementy UI
+    // onViewCreated: Inicjalizuje widoki i ustawia listenery po utworzeniu widoku.
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        Log.d(TAG_FRAGMENT, "onViewCreated called")
+
+        // --- Znajdź widoki z layoutu ---
+        buttonImportCsv = view.findViewById(R.id.button_import_csv)
         editTextRouteName = view.findViewById(R.id.edit_text_route_name)
         editTextCoordX = view.findViewById(R.id.edit_text_coord_x)
         editTextCoordY = view.findViewById(R.id.edit_text_coord_y)
         buttonAddPoint = view.findViewById(R.id.button_add_point)
         buttonConfirmRoute = view.findViewById(R.id.button_confirm_route)
-        buttonImportCsv = view.findViewById(R.id.button_import_csv)
+        spinnerFloor = view.findViewById(R.id.spinner_floor) // Znajdź Spinner piętra
 
-        // Wywołaj funkcję do ustawiania przycisków
-        setUpButtoms()
 
-        return view
+        // --- Odczytaj argumenty (dostępne piętra) przekazane z Activity ---
+        arguments?.getIntArray("available_floors")?.let {
+            availableFloors = it // Zapisz dostępne piętra
+
+            // Utwórz ArrayAdapter dla Spinnera pięter
+            val floorStrings = availableFloors.map { it.toString() }.toTypedArray() // Skonwertuj IntArray na Array<String>
+            val floorArrayAdapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item, floorStrings)
+            floorArrayAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) // Ustaw layout dla listy rozwijanej
+            spinnerFloor.adapter = floorArrayAdapter // Przypisz adapter do Spinnera
+            Log.d(TAG_FRAGMENT, "Spinner pięter zainicjalizowany z opcjami: ${availableFloors.joinToString()}")
+
+            // Opcjonalnie: Ustaw domyślne wybrane piętro w Spinnerze (np. 0 lub pierwszy element)
+            val defaultFloorIndex = availableFloors.indexOfFirst { it == 0 } // Znajdź index piętra 0
+            if (defaultFloorIndex != -1) {
+                spinnerFloor.setSelection(defaultFloorIndex) // Ustaw piętro 0 jako domyślne, jeśli istnieje
+            } else if (availableFloors.isNotEmpty()) {
+                spinnerFloor.setSelection(0) // Jeśli brak piętra 0, ustaw pierwszy element na liście
+            }
+
+        } ?: run {
+            Log.e(TAG_FRAGMENT, "Błąd: Brak listy dostępnych pięter w argumentach Fragmentu.")
+            Toast.makeText(requireContext(), "Błąd konfiguracji pięter.", Toast.LENGTH_LONG).show()
+            // Jeśli brak danych o piętrach, wyłącz Spinner i przycisk dodawania punktów
+            spinnerFloor.isEnabled = false
+            buttonAddPoint.isEnabled = false
+        }
+
+
+        // --- Ustaw Listenery Przycisków ---
+        setupAddPointButton() // Listener dla przycisku "Dodaj punkt"
+        setupConfirmRouteButton() // Listener dla przycisku "Zatwierdź trasę"
+        setupImportCsvButton() // Listener dla przycisku "Importuj trasę z CSV"
+
+        // TODO: Opcjonalnie wyświetlaj listę dodanych punktów w UI Fragmentu (np. w TextView lub ListView)
+        // To pomaga użytkownikowi śledzić dodane punkty i ich piętra.
     }
 
-    private fun setUpButtoms(){
-
+    // Ustawia listener dla przycisku "Dodaj punkt" (ręczne dodawanie)
+    private fun setupAddPointButton() {
         buttonAddPoint.setOnClickListener {
-            val xText = editTextCoordX.text.toString()
-            val yText = editTextCoordY.text.toString()
+            val xText = editTextCoordX.text.toString().trim()
+            val yText = editTextCoordY.text.toString().trim()
+            // Nazwa trasy jest potrzebna przy zatwierdzaniu, nie przy dodawaniu punktu
 
             // Walidacja pól X i Y
             if (xText.isBlank() || yText.isBlank()) {
@@ -69,31 +119,56 @@ class CreateRouteFragment : Fragment() {
                 return@setOnClickListener
             }
 
-            // Użyj toDoubleOrNull() i odbierz wartości Double
-            val xCoord_double = xText.toDoubleOrNull()
-            val yCoord_double = yText.toDoubleOrNull()
+            // --- POBIERZ WYBRANE PIĘTRO ZE SPINNERA ---
+            // Sprawdź, czy Spinner ma wybrany element i lista dostępnych pięter nie jest pusta
+            if (spinnerFloor.selectedItem == null || availableFloors.isEmpty()) {
+                Toast.makeText(requireContext(), "Wybierz piętro dla punktu.", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            val selectedFloorString = spinnerFloor.selectedItem.toString()
+            val selectedFloor: Int
+            try {
+                selectedFloor = selectedFloorString.toInt()
+                Log.d(TAG_FRAGMENT, "Wybrano piętro ze Spinnera: $selectedFloor")
+            } catch (e: NumberFormatException) {
+                Log.e(TAG_FRAGMENT, "Błąd parsowania wybranego piętra: $selectedFloorString", e)
+                Toast.makeText(requireContext(), "Błąd: Nieprawidłowa wartość piętra.", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
 
-            // Sprawdź, czy konwersja na Double się udała
-            if (xCoord_double != null && yCoord_double != null) {
-                // Tworzymy obiekt MapPoint(Double, Double) do przechowywania surowych danych
-                val newMapPoint = MapPoint(xCoord_double, yCoord_double) // Tworzymy MapPoint!
+            try {
+                val x = xText.toDouble()
+                val y = yText.toDouble()
 
-                collectedMapPoints.add(newMapPoint) // Dodajemy MapPoint do listy
+                // --- UTWÓRZ MapPoint Z INFORMACJĄ O PIĘTRZE ---
+                val newPoint = MapPoint(x, y, selectedFloor) // Użyj X, Y i pobranego piętra
 
-                // Wyświetl Toast z wartościami Double, żeby potwierdzić precyzję
-                Toast.makeText(requireContext(), "Dodano punkt: ($xCoord_double, $yCoord_double)", Toast.LENGTH_SHORT).show()
+                // --- UTWÓRZ Marker Z NOWYM PUNKTEM (domyślnie PENDING) ---
+                val newMarker = Marker(point = newPoint, state = MarkerState.PENDING) // Nowy punkt dodajemy jako PENDING
 
-                // Opcjonalnie: Wyczyść pola po dodaniu punktu
+                // --- DODAJ NOWY MARKER DO TYMCZASOWEJ LISTY ---
+                tempRouteMarkers.add(newMarker) // <-- DODAJ MARKER DO LISTY TYMCZASOWEJ
+                Log.d(TAG_FRAGMENT, "Dodano punkt ręcznie do tymczasowej listy: (${x}, ${y}) na piętrze ${selectedFloor}. Liczba punktów: ${tempRouteMarkers.size}")
+
+                // TODO: Opcjonalnie zaktualizuj UI Fragmentu, żeby pokazać dodane punkty
+
+                // Wyczyść pola EditText dla X i Y po dodaniu punktu
                 editTextCoordX.text.clear()
                 editTextCoordY.text.clear()
 
-            } else {
-                Toast.makeText(requireContext(), "Nieprawidłowe wartości współrzędnych!", Toast.LENGTH_SHORT).show()
+                // Potwierdź dodanie punktu Toastem
+                Toast.makeText(requireContext(), "Dodano punkt na piętrze ${selectedFloor}", Toast.LENGTH_SHORT).show()
+
+            } catch (e: NumberFormatException) {
+                Toast.makeText(requireContext(), "Wprowadź poprawne wartości liczbowe dla X i Y.", Toast.LENGTH_SHORT).show()
             }
         }
+    }
 
+    // Ustawia listener dla przycisku "Zatwierdź trasę"
+    private fun setupConfirmRouteButton() {
         buttonConfirmRoute.setOnClickListener {
-            val routeName = editTextRouteName.text.toString().trim() // Pobierz nazwę trasy
+            val routeName = editTextRouteName.text.toString().trim()
 
             // Walidacja: nazwa trasy nie może być pusta
             if (routeName.isBlank()) {
@@ -101,252 +176,258 @@ class CreateRouteFragment : Fragment() {
                 return@setOnClickListener
             }
 
-            // Walidacja: musi być przynajmniej jeden punkt
-            if (collectedMapPoints.isEmpty()) {
+            // Walidacja: musi być przynajmniej jeden punkt w tymczasowej liście
+            if (tempRouteMarkers.isEmpty()) { // <-- SPRAWDŹ TYMCZASOWĄ LISTĘ MARKERÓW
                 Toast.makeText(requireContext(), "Dodaj przynajmniej jeden punkt do trasy!", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
 
-            // --- Tworzenie obiektu Route z MapPoint(Double, Double) ---
-            // Konwertujemy List<MapPoint> na List<Marker<MapPoint>>
-            val markersList: List<Marker> = collectedMapPoints.map { mapPoint ->
-                // Dla każdego MapPointa tworzymy nowy Marker z tym MapPointem i domyślnym stanem PENDING
-                Marker(point = mapPoint, state = MarkerState.PENDING) // Marker używa MapPoint!
-            }
-
-            // Stwórz obiekt Route używając nazwy i listy Markerów (które używają MapPoint)
-            val newRoute = Route(name = routeName, markers = markersList) // Route przechowuje Markery z MapPoint!
-
-            // Użyj RouteStorage do zapisania trasy (będzie zapisywał Route z MapPoint)
-            // requireContext() daje bezpieczny Context
-            RouteStorage.addRoute(requireContext(), newRoute)
-
-            Toast.makeText(requireContext(), "Trasa '$routeName' zapisana pomyślnie (${collectedMapPoints.size} punktów)!", Toast.LENGTH_LONG).show()
-
-            val resultBundle = Bundle().apply {
-                putBoolean("route_saved_success", true)
-            }
-            requireActivity().supportFragmentManager.setFragmentResult("route_saved_key", resultBundle)
-
-            // --- Po zapisaniu zamknij Fragment ---
-            requireActivity().supportFragmentManager.popBackStack()
-
-            // Opcjonalnie: Wyślij wynik do Activity, żeby mogła odświeżyć listę tras
-            // np. requireActivity().supportFragmentManager.setFragmentResult(...)
-        }
-
-        buttonImportCsv.setOnClickListener {
-            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                type = "text/*"
-                addCategory(Intent.CATEGORY_OPENABLE)
-            }
-            startActivityForResult(intent, PICK_CSV_FILE_FRAGMENT)
+            // Wszystko wygląda OK, pokaż dialog zapytania o ostateczną nazwę i zapisz trasę.
+            // Dialog poprosi o ostateczną nazwę i wywoła logikę zapisu.
+            // Przekazujemy do dialogu listę markerów Z TYMCZASOWEJ LISTY, która ma być zapisana.
+            showRouteNameDialog(tempRouteMarkers, routeName) // <-- PRZEKAŻ TYMCZASOWĄ LISTĘ MARKERÓW I DOMYŚLNĄ NAZWĘ
         }
     }
 
+    // Ustawia listener dla przycisku "Importuj trasę z CSV"
+    private fun setupImportCsvButton() {
+        buttonImportCsv.setOnClickListener {
+            openCsvFilePicker() // Użyj nazwy bez "Fragment" na końcu dla spójności
+        }
+    }
+
+    // Otwiera systemowy selektor plików CSV
+    private fun openCsvFilePicker() { // Zmieniono nazwę
+        Log.d(TAG_FRAGMENT, "Otwieram systemowy selektor plików CSV.")
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            type = "text/*" // Używamy "text/*" lub "*/*" bo typ MIME "text/csv" może być nierozpoznany.
+            // type = "*/*" // Alternatywnie możesz pozwolić wybrać każdy plik
+
+            addCategory(Intent.CATEGORY_OPENABLE) // Wymaga, żeby plik był otwieralny jako strumień
+        }
+        // Użyj registerForActivityResult lub startActivityForResult z opcją deprecacji
+        startActivityForResult(intent, PICK_CSV_FILE_FRAGMENT) // Deprecated, ale działa na starszych API
+        // TODO: Rozważ migrację do Activity Result API (registerForActivityResult)
+    }
+
+    // Obsługuje rezultat z systemowego selektora plików
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        Log.d(TAG_FRAGMENT, "onActivityResult called z requestCode: $requestCode, resultCode: $resultCode")
 
-        // Sprawdź, czy rezultat pochodzi z naszego żądania selektora plików z Fragmentu
+        // Sprawdź, czy rezultat pochodzi z naszego żądania selektora plików
         if (requestCode == PICK_CSV_FILE_FRAGMENT && resultCode == Activity.RESULT_OK) {
             data?.data?.let { uri ->
-
-                readAndParseCsvFile(uri) // Wywołaj nową metodę do czytania i parsowania
-
+                Log.d(TAG_FRAGMENT, "Wybrano plik CSV z URI: $uri")
+                readAndParseCsvFile(uri) // Wywołaj metodę do czytania i parsowania pliku CSV
             } ?: run {
+                Log.w(TAG_FRAGMENT, "onActivityResult: URI danych jest nullem.")
                 Toast.makeText(requireContext(), "Nie wybrano pliku.", Toast.LENGTH_SHORT).show()
             }
+        } else {
+            Log.d(TAG_FRAGMENT, "onActivityResult: Nieobsługiwany requestCode ($requestCode) lub resultCode ($resultCode).")
         }
     }
 
+    // Metoda do czytania i parsowania pliku CSV
     private fun readAndParseCsvFile(uri: Uri) {
-        Log.d("CreateRouteFragment", "Rozpoczynam czytanie i parsowanie pliku CSV z URI: $uri w Fragmentcie.")
+        Log.d(TAG_FRAGMENT, "Rozpoczynam czytanie i parsowanie pliku CSV z URI: $uri.")
 
-        val parsedPoints = mutableListOf<MapPoint>() // Lista do przechowywania wczytanych punktów
+        val parsedMapPointsFromCsv = mutableListOf<MapPoint>() // Tymczasowa lista do przechowywania parsowanych MapPoint z CSV
 
         try {
-            // Otwórz strumień do odczytu pliku z danego URI
             requireContext().contentResolver.openInputStream(uri)?.use { inputStream ->
-                // Użyj InputStreamReader i BufferedReader do czytania linii tekstu
                 BufferedReader(InputStreamReader(inputStream)).use { reader ->
-                    // pomijanie pierwszej linijki csv (nagłówka)
+                    // Pomijanie pierwszej linijki CSV (nagłówka)
                     val headerLine = reader.readLine()
+                    if (headerLine != null) {
+                        Log.d(TAG_FRAGMENT, "Pominięto pierwszą linię (nagłówek CSV): '$headerLine'")
+                    } else {
+                        Log.w(TAG_FRAGMENT, "Plik CSV jest pusty, nie było pierwszej linii do pominięcia.")
+                    }
+
 
                     var line: String?
-                    var lineNumber = 0 // Licznik linii do lepszego raportowania błędów
+                    var lineNumber = 0 // Licznik linii danych (po nagłówku)
 
-                    // Czytaj plik linijka po linijce
+                    // Czytaj plik linijka po linijce (od drugiej fizycznej linii pliku)
                     while (reader.readLine().also { line = it } != null) {
-                        lineNumber++
-                        val currentLine = line?.trim() ?: "" // Pobierz bieżącą linijkę, usuń białe znaki, użyj pustego stringa jeśli linijka jest null
+                        lineNumber++ // Inkrementuj numer linii DANYCH
+                        val currentLine = line?.trim() ?: "" // Pobierz bieżącą linijkę
 
-                        // Pomiń puste linie lub linie komentarzy (np. zaczynające się od #)
+                        // Pomiń puste linie lub linie komentarzy
                         if (currentLine.isEmpty() || currentLine.startsWith("#")) {
                             continue
                         }
 
                         // Podziel linijkę na części używając przecinka jako separatora
+                        // ZMIENIONY FORMAT CSV: Oczekuj 3 części (X, Y, Piętro)
                         val parts = currentLine.split(",")
 
-                        // Sprawdź, czy linijka ma dokładnie 2 części (X i Y)
-                        if (parts.size == 2) {
+                        // Sprawdź, czy linijka ma dokładnie 3 części
+                        if (parts.size == 3) { // <-- ZMIENIONO Z 2 NA 3
                             try {
-                                // Spróbuj przekonwertować części na liczby Double
-                                val x = parts[0].trim().toDouble() // Upewnij się, że usuwasz białe znaki przed konwersją
+                                // Spróbuj przekonwertować części na liczby (X, Y) i Int (Piętro)
+                                val x = parts[0].trim().toDouble()
                                 val y = parts[1].trim().toDouble()
+                                val floor = parts[2].trim().toInt() // <-- POBIERZ PIĘTRO JAKO INT
 
-                                val newPoint = MapPoint(x, y) //zakładamy, że CSV jest w formacie (X, Y)
-                                parsedPoints.add(newPoint) // Dodaj poprawnie sparsowany punkt do listy
-                                Log.d("CreateRouteFragment", "Linia $lineNumber: Parsowano punkt: ($x, $y)")
+                                // TODO: PAMIĘTAJ O MOŻLIWEJ ZAMIANIE KOLEJNOŚCI X i Y TUTAJ PRZY TWORZENIU MapPoint!
+                                // Użyj poprawnej kolejności X i Y zgodnie z tym, jak Twoje dane mapowe są zdefiniowane.
+                                val newPoint = MapPoint(x, y, floor) // <-- UTWÓRZ MapPoint Z POBRANYM PIĘTREM
+
+                                parsedMapPointsFromCsv.add(newPoint) // <-- DODAJ DO TYMCZASOWEJ LISTY PARSOWANEJ CSV
+                                Log.d(TAG_FRAGMENT, "Linia Danych $lineNumber: Parsowano punkt CSV: ($x, $y) na piętrze $floor")
 
                             } catch (e: NumberFormatException) {
-                                // Błąd konwersji na liczbę
-                                Log.w("CreateRouteFragment", "Linia $lineNumber: Błąd parsowania liczby: ${e.message}. Linijka: '$currentLine'")
-                                // Możesz pominąć tę linię lub powiadomić użytkownika
+                                // Błąd konwersji na Double (dla X/Y) lub Int (dla piętra)
+                                Log.w(TAG_FRAGMENT, "Linia Danych $lineNumber: Błąd parsowania liczby lub piętra z CSV: ${e.message}. Linijka: '$currentLine'")
+                                Toast.makeText(requireContext(), "CSV: Błąd w linii $lineNumber: '${currentLine}' - nieprawidłowa liczba/piętro.", Toast.LENGTH_SHORT).show()
+                            } catch (e: Exception) { // Złap inne błędy parsowania
+                                Log.w(TAG_FRAGMENT, "Linia Danych $lineNumber: Nieoczekiwany błąd parsowania CSV: ${e.message}. Linijka: '$currentLine'", e)
+                                Toast.makeText(requireContext(), "CSV: Błąd w linii $lineNumber: '${currentLine}' - ${e.message}.", Toast.LENGTH_SHORT).show()
                             }
                         } else {
-                            // Linijka nie ma 2 części
-                            Log.w("CreateRouteFragment", "Linia $lineNumber: Nieoczekiwana liczba części (${parts.size}). Oczekiwano 2. Linijka: '$currentLine'")
-                            // Możesz pominąć tę linię lub powiadomić użytkownika
+                            // Linijka nie ma 3 części
+                            Log.w(TAG_FRAGMENT, "Linia Danych $lineNumber: Nieoczekiwana liczba części (${parts.size}) w CSV. Oczekiwano 3. Linijka: '$currentLine'")
+                            Toast.makeText(requireContext(), "CSV: Błąd w linii $lineNumber: '${currentLine}' - nieprawidłowy format.", Toast.LENGTH_SHORT).show()
                         }
-                    }
-                }
-            }
+                    } // Koniec pętli while
+                } // Koniec use reader
+            } // Koniec use inputStream
 
-            // --- ZAKOŃCZONO CZYTANIE PLIKU ---
+            // --- ZAKOŃCZONO CZYTANIE PLIKU CSV ---
 
-            // Sprawdź, czy wczytano jakiekolwiek punkty
-            if (parsedPoints.isEmpty()) {
-                Log.w("CreateRouteFragment", "Brak poprawnie sparsowanych punktów z pliku CSV.")
-                Toast.makeText(requireContext(), "Plik CSV jest pusty lub w niepoprawnym formacie.", Toast.LENGTH_LONG).show()
+            // Sprawdź, czy wczytano jakiekolwiek punkty DANYCH z CSV po parsowaniu
+            if (parsedMapPointsFromCsv.isEmpty()) { // <-- SPRAWDŹ TYMCZASOWĄ LISTĘ Z PARSOWANIA
+                Log.w(TAG_FRAGMENT, "Brak poprawnie sparsowanych punktów danych z pliku CSV.")
+                Toast.makeText(requireContext(), "Plik CSV jest pusty lub w całości zawiera błędy formatowania.", Toast.LENGTH_LONG).show()
                 // Fragment pozostaje otwarty, użytkownik może spróbować ponownie lub wprowadzić ręcznie.
-                return // Przerywamy proces, jeśli brak punktów
+                return // Przerywamy proces, jeśli brak poprawnych punktów w CSV
             }
 
-            Log.d("CreateRouteFragment", "Pomyślnie sparsowano ${parsedPoints.size} punktów z pliku CSV.")
+            Log.d(TAG_FRAGMENT, "Pomyślnie sparsowano ${parsedMapPointsFromCsv.size} poprawnych punktów z pliku CSV.")
+
+            // --- Konwertuj sparsowane MapPointy z CSV na Markery i DODAJ JE DO GŁÓWNEJ LISTY TYMCZASOWEJ ---
+            // Zakładamy, że punkty z CSV to również nowe punkty w tworzonej trasie, domyślnie PENDING.
+            tempRouteMarkers.clear() // <-- CZYŚĆ GŁÓWNĄ LISTĘ TYMCZASOWĄ przed dodaniem punktów z CSV
+            parsedMapPointsFromCsv.forEach { mapPoint ->
+                tempRouteMarkers.add(Marker(point = mapPoint, state = MarkerState.PENDING)) // Utwórz Marker z MapPoint i dodaj do listy tymczasowej
+            }
+            Log.d(TAG_FRAGMENT, "Punkty z CSV (${parsedMapPointsFromCsv.size}) dodano do głównej listy tymczasowej. Łączna liczba punktów: ${tempRouteMarkers.size}")
 
 
-            // --- Pobierz nazwę pliku z URI ---
-            val defaultRouteName = getFileNameFromUri(uri) ?: "Trasa z CSV" // Pobierz nazwę lub użyj domyślnej
-            // Opcjonalnie: usuń rozszerzenie ".csv" z nazwy pliku
-            val routeNameWithoutExtension = defaultRouteName.removeSuffix(".csv")
+            // TODO: Opcjonalnie zaktualizuj UI Fragmentu (np. wyświetl listę punktów wczytanych z CSV)
 
             // --- Zapytaj użytkownika o nazwę trasy ---
-            showRouteNameDialog(parsedPoints, routeNameWithoutExtension)
+            // Dialog będzie używał punktów Z GŁÓWNEJ LISTY TYMCZASOWEJ (tempRouteMarkers), która teraz zawiera punkty z CSV.
+            val defaultRouteName = getFileNameFromUri(uri) ?: "Trasa z CSV" // Pobierz nazwę pliku CSV lub użyj domyślnej
+            val routeNameWithoutExtension = defaultRouteName.removeSuffix(".csv") // Usuń rozszerzenie .csv
+
+            showRouteNameDialog(tempRouteMarkers, routeNameWithoutExtension) // <-- PRZEKAŻ GŁÓWNĄ LISTĘ TYMCZASOWĄ MARKERÓW
 
         } catch (e: IOException) {
-            // Błąd podczas otwierania lub czytania pliku
-            Log.e("CreateRouteFragment", "Błąd odczytu pliku CSV: ${e.message}", e)
+            Log.e(TAG_FRAGMENT, "Błąd odczytu pliku CSV: ${e.message}", e)
             Toast.makeText(requireContext(), "Błąd odczytu pliku CSV: ${e.message}", Toast.LENGTH_LONG).show()
-            // Fragment pozostaje otwarty.
         } catch (e: Exception) {
-            // Inne nieoczekiwane błędy podczas parsowania
-            Log.e("CreateRouteFragment", "Nieoczekiwany błąd podczas parsowania CSV: ${e.message}", e)
+            Log.e(TAG_FRAGMENT, "Nieoczekiwany błąd podczas przetwarzania CSV: ${e.message}", e)
             Toast.makeText(requireContext(), "Błąd podczas przetwarzania pliku CSV.", Toast.LENGTH_LONG).show()
-            // Fragment pozostaje otwarty.
         }
     }
 
-
+    // Metoda pomocnicza do pobierania nazwy pliku z URI (używana przy imporcie CSV)
     private fun getFileNameFromUri(uri: Uri): String? {
-        Log.d("CreateRouteFragment", "Próbuję pobrać nazwę pliku z URI: $uri")
+        // ... (Twoja istniejąca implementacja getFileNameFromUri) ...
+        Log.d(TAG_FRAGMENT, "Próbuję pobrać nazwę pliku z URI: $uri")
         val contentResolver: ContentResolver = requireContext().contentResolver
-        // Zapytanie do ContentResolver o informacje o URI
         val cursor = contentResolver.query(uri, null, null, null, null)
 
-        cursor?.use { // Użyj use do automatycznego zamknięcia kursora
-            // Przejdź do pierwszego (i zazwyczaj jedynego) wiersza rezultatu
+        cursor?.use {
             if (it.moveToFirst()) {
-                // Znajdź indeks kolumny z nazwą wyświetlaną
-                // OpenableColumns.DISPLAY_NAME to standardowa kolumna dla nazwy wyświetlanej pliku w ContentProviderach obsługujących ACTION_OPEN_DOCUMENT
                 val nameIndex = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                // Sprawdź, czy kolumna DISPLAY_NAME istnieje (-1 jeśli nie istnieje)
                 if (nameIndex != -1) {
                     val fileName = it.getString(nameIndex)
-                    Log.d("CreateRouteFragment", "Pobrano nazwę pliku z URI: $fileName")
-                    return fileName // Zwróć nazwę pliku
+                    Log.d(TAG_FRAGMENT, "Pobrano nazwę pliku z URI: $fileName")
+                    return fileName
                 } else {
-                    Log.w("CreateRouteFragment", "Nie znaleziono kolumny DISPLAY_NAME dla URI.")
+                    Log.w(TAG_FRAGMENT, "Nie znaleziono kolumny DISPLAY_NAME dla URI.")
                 }
             } else {
-                Log.w("CreateRouteFragment", "Kursor dla URI pusty.")
+                Log.w(TAG_FRAGMENT, "Kursor dla URI pusty.")
             }
         } ?: run {
-            Log.w("CreateRouteFragment", "ContentResolver.query() zwrócił null dla URI.")
+            Log.w(TAG_FRAGMENT, "ContentResolver.query() zwrócił null dla URI.")
         }
 
-        Log.w("CreateRouteFragment", "Nie udało się pobrać nazwy pliku z URI.")
-        return null // Zwróć null, jeśli nie udało się pobrać nazwy
+        Log.w(TAG_FRAGMENT, "Nie udało się pobrać nazwy pliku z URI.")
+        return null
     }
 
-    private fun showRouteNameDialog(points: List<MapPoint>, defaultName: String) {
-        Log.d("CreateRouteFragment", "Pokazuję dialog zapytania o nazwę dla trasy z CSV.")
+
+    // Metoda do wyświetlania dialogu zapytania o nazwę trasy przed zapisem
+    // Teraz przyjmuje List<Marker> (punkty do zapisania)
+    private fun showRouteNameDialog(markersToSave: List<Marker>, defaultName: String) { // <-- PRZYJMUJ LISTĘ MARKERÓW
+        Log.d(TAG_FRAGMENT, "Pokazuję dialog zapytania o nazwę trasy. Liczba markerów do zapisania: ${markersToSave.size}")
 
         val inputEditText = EditText(requireContext()).apply {
             hint = "Wprowadź nazwę trasy"
-            setText(defaultName)
-            setSelection(defaultName.length)
+            setText(defaultName) // Ustaw domyślną nazwę (z CSV lub z pola nazwy trasy)
+            setSelection(defaultName.length) // Ustaw kursor na końcu tekstu
         }
 
         AlertDialog.Builder(requireContext())
-            .setTitle("Podaj nazwę dla importowanej trasy")
-            .setView(inputEditText) // Ustaw EditText jako widok dialogu
+            .setTitle("Podaj nazwę trasy") // Bardziej ogólny tytuł dialogu
+            .setView(inputEditText)
             .setPositiveButton("Zatwierdź") { dialog, which ->
                 val routeName = inputEditText.text.toString().trim()
 
-                // --- Logika po zatwierdzeniu nazwy ---
-                if (routeName.isEmpty()) {
+                // --- Logika po zatwierdzeniu nazwy w dialogu ---
+                if (routeName.isBlank()) { // Użyj isBlank() żeby sprawdzić czy nazwa nie jest pusta lub zawiera tylko białe znaki
                     Toast.makeText(requireContext(), "Nazwa trasy nie może być pusta.", Toast.LENGTH_SHORT).show()
-                    // Możesz ponownie pokazać dialog lub zostawić Fragment otwarty.
-                    // Nie zamykamy dialogu automatycznie, jeśli nazwa jest pusta.
-                    // Aby dialog pozostał otwarty na pustej nazwie, trzeba zastosować niestandardowy listener przycisku pozytywnego.
-                    // Na razie Toast i pozwalamy dialogowi się zamknąć.
-                    return@setPositiveButton // Przerywamy, jeśli nazwa pusta
+                    // Dialog zamknie się, ale użytkownik może kliknąć "Zatwierdź trasę" ponownie.
+                    return@setPositiveButton // Przerywamy dalszą logikę, jeśli nazwa pusta
                 }
 
-                // --- Stwórz obiekt Route z wczytanych punktów ---
-                val markersList: List<Marker> = points.map { mapPoint ->
-                    Marker(point = mapPoint, state = MarkerState.PENDING) // Wszystkie punkty początkowo PENDING
-                }
-                val newRoute = Route(name = routeName, markers = markersList)
+                // --- Stwórz obiekt Route Z MARKERÓW DO ZAPISANIA ---
+                // markersToSave to już jest List<Marker> (pochodzi z tempRouteMarkers lub z CSV)
+                val newRoute = Route(name = routeName, markers = markersToSave) // <-- UŻYJ PRZEKAZANEJ LISTY MARKERÓW
 
                 // --- Zapisz trasę do pamięci trwałej ---
                 try {
-                    // TODO: Upewnij się, że RouteStorage.addRoute jest dostępne i działa poprawnie w kontekście Fragmentu.
-                    // Może być potrzebne przekazanie go z Activity lub inna adaptacja.
-                    // Na razie zakładam, że jest dostępne.
-                    RouteStorage.addRoute(requireContext(), newRoute)
+                    // Upewnij się, że RouteStorage.addRoute jest dostępny i działa poprawnie
+                    RouteStorage.addRoute(requireContext(), newRoute) // Zapisz nową trasę
 
-                    Log.i("CreateRouteFragment", "Trasa '$routeName' zaimportowana i zapisana pomyślnie (${points.size} punktów)!")
-                    Toast.makeText(requireContext(), "Trasa '$routeName' zaimportowana i zapisana!", Toast.LENGTH_LONG).show()
+                    Log.i(TAG_FRAGMENT, "Trasa '$routeName' zapisana pomyślnie (${newRoute.markers.size} punktów)!")
+                    Toast.makeText(requireContext(), "Trasa '$routeName' zapisana!", Toast.LENGTH_LONG).show()
 
                     // --- Zakończ Fragment i wróć do Activity ---
                     // Wyślij rezultat z powrotem do Activity, żeby odświeżyło listę tras.
                     val resultBundle = Bundle().apply {
-                        putBoolean("route_saved_success", true) // Ten sam klucz co przy ręcznym dodawaniu
+                        putBoolean("route_saved_success", true) // Ten sam klucz co Activity nasłuchuje
                     }
                     requireActivity().supportFragmentManager.setFragmentResult("route_saved_key", resultBundle)
-                    Log.d("CreateRouteFragment", "Wysłano rezultat fragmentu po imporcie CSV.")
+                    Log.d(TAG_FRAGMENT, "Wysłano rezultat fragmentu po zapisie.")
 
-                    // Zamknij Fragment
-                    // Używamy opóźnienia jak przy ręcznym dodawaniu, żeby uniknąć problemów z timingiem
-                    Log.d("CreateRouteFragment", "Przygotowanie do popBackStack() po imporcie CSV...")
+                    // Wyczyść tymczasową listę po udanym zapisie
+                    tempRouteMarkers.clear()
+
+                    // Zamknij Fragment (powrót do poprzedniego Activity/Fragmentu na stosie wstecz)
+                    // Używamy opóźnienia, żeby upewnić się, że rezultat dotrze do Activity, zanim Fragment zniknie.
+                    Log.d(TAG_FRAGMENT, "Przygotowanie do popBackStack() po zapisie.")
                     Handler(Looper.getMainLooper()).postDelayed({
-                        Log.d("CreateRouteFragment", "Wywołanie popBackStack() po opóźnieniu (CSV).")
+                        Log.d(TAG_FRAGMENT, "Wywołanie popBackStack() po opóźnieniu.")
                         requireActivity().supportFragmentManager.popBackStack()
                     }, 100) // Opóźnienie 100 ms
 
 
                 } catch (e: Exception) {
-                    Log.e("CreateRouteFragment", "Błąd podczas zapisu importowanej trasy '$routeName'.", e)
-                    Toast.makeText(requireContext(), "Błąd zapisu importowanej trasy!", Toast.LENGTH_LONG).show()
-                    // Fragment pozostaje otwarty.
+                    Log.e(TAG_FRAGMENT, "Błąd podczas zapisu trasy '$routeName'.", e)
+                    Toast.makeText(requireContext(), "Błąd zapisu trasy!", Toast.LENGTH_LONG).show()
+                    // Fragment pozostaje otwarty w przypadku błędu zapisu.
                 }
 
-                // dialog.dismiss() // Dialog zamyka się automatycznie po kliknięciu przycisku.
-            }
-            .setNegativeButton("Anuluj", null) // Przycisk Anuluj
-            .show()
+            } // Dialog zamyka się automatycznie po kliknięciu pozytywnego przycisku
+            .setNegativeButton("Anuluj", null) // Przycisk Anuluj (domyślne zachowanie - zamknij dialog)
+            .show() // Pokaż dialog
     }
-
 }

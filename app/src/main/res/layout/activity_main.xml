@@ -16,6 +16,15 @@ android:theme="@style/ThemeOverlay.AppCompat.Dark.ActionBar"
 app:popupTheme="@style/ThemeOverlay.AppCompat.Light"
 android:elevation="4dp" />
 
+<LinearLayout
+    android:id="@+id/floorButtonsContainer"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center"
+    android:paddingVertical="8dp">
+</LinearLayout>
+
 <FrameLayout
 android:id="@+id/mainContentContainer"
     android:layout_width="match_parent"

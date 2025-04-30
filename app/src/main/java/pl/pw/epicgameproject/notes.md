@@ -14,4 +14,12 @@ WiFi:
     niewiadomo czemu nagle skany sa robione co jakies 3-4 sekundy. 
 TODO:
     2. Częstsze skany wifi - Lipka
-    3. dodanie logiki usowania trasy
+    3. fajnie dziala, problem jest jeszcze w zamienianiu kolorow znacznikow
+
+jest duzy problem z ustawieniem czestotliwosci 
+
+
+za cienka zielona linia, trzeba dodac legende kolorw co oznaczaja i dodatkowo 
+trzeba zaimplementowac, zeby przechodzac przez piętra dodawało do widoku ostatni punkt z poprzedniego pietra. 
+Dodatkowo trzeba jeszcze zmienic zeby automatycznie bralo cie na pierwsze piętro w pliku. 
+

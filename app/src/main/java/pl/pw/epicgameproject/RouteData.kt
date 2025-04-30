@@ -6,14 +6,15 @@ package pl.pw.epicgameproject // Upewnij się, że pakiet jest prawidłowy
 enum class MarkerState {
     PENDING,
     CURRENT,
-    VISITED
+    VISITED,
+    END
 }
 
 // --- KLASY PUNKTÓW ---
 
 // Reprezentuje punkt w UKŁADZIE MAPOWYM (np. z pliku PGW).
 // Używa Double dla precyzji, żeby przechowywać surowe dane mapowe.
-data class MapPoint(val x: Double, val y: Double)
+data class MapPoint(val x: Double, val y: Double, val floor: Int)
 
 // Reprezentuje punkt w PIKSELach na ekranie/widoku RouteOverlayView.
 // Używa Float, jak wymagają funkcje Canvas do rysowania.

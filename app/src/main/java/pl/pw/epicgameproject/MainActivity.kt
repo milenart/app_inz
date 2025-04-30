@@ -1,5 +1,8 @@
 package pl.pw.epicgameproject
 
+
+import pl.pw.epicgameproject.MapConverter
+import pl.pw.epicgameproject.WorldFileParameters
 // Importy Android
 import android.Manifest
 import android.app.AlertDialog
@@ -16,6 +19,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.content.res.Resources
+import android.graphics.Bitmap
 import android.graphics.PointF
 import android.hardware.Sensor
 import android.hardware.SensorEvent
@@ -51,8 +56,12 @@ import android.graphics.BitmapFactory
 import androidx.appcompat.widget.Toolbar
 import android.view.Menu
 import android.view.MenuItem
+import android.widget.LinearLayout
 import androidx.fragment.app.FragmentManager
 
+fun Int.dpToPx(): Int {
+    return (this * Resources.getSystem().displayMetrics.density).toInt()
+}
 
 class MainActivity : AppCompatActivity(), SensorEventListener, FragmentManager.OnBackStackChangedListener {
 
@@ -62,29 +71,24 @@ class MainActivity : AppCompatActivity(), SensorEventListener, FragmentManager.O
     private lateinit var startButton: Button
     private lateinit var nextButton: Button
     private lateinit var stopButton: Button
-
-    //    private lateinit var selectRouteButton: Button
-//    private lateinit var createRouteButton: Button
-//    private lateinit var deleteRouteButton: Button
     private lateinit var toolbar: Toolbar
+    private lateinit var floorButtonsContainer: LinearLayout
+    private val floorButtons = mutableMapOf<Int, Button>()
 
 
-    // Przykladowa sciezka
-    private val some_geo_x_1 = 637245.46
-    private val some_geo_y_1 = 485716.91
-    private val some_geo_x_2 = 637260.65
-    private val some_geo_y_2 = 485717.58
-    private val some_geo_x_3 = 637261.27
-    private val some_geo_y_3 = 485746.35
-    private val some_geo_x_4 = 637225.19
-    private val some_geo_y_4 = 485761.54
 
-    private val geographicRoutePoints: List<MapPoint> = listOf(
-        MapPoint(some_geo_x_1, some_geo_y_1),
-        MapPoint(some_geo_x_2, some_geo_y_2),
-        MapPoint(some_geo_x_3, some_geo_y_3),
-        MapPoint(some_geo_x_4, some_geo_y_4)
+    private var mapConverter: MapConverter? = null
+
+    // mapowanie sciezek do pięter
+    private val floorPlanBitmapMap = mutableMapOf<Int, Bitmap>()
+    private val floorFileMappingPng = mapOf(
+        0 to "gmach_f0.png",
+        1 to "gmach_f1.png",
+        2 to "gmach_f2.png",
+        3 to "gmach_f3.png",
+        4 to "gmach_f4.png",
     )
+    private var currentFloor: Int = 0
 
     // Ścieżki
     private var routes: List<Route> = emptyList()
@@ -112,14 +116,6 @@ class MainActivity : AppCompatActivity(), SensorEventListener, FragmentManager.O
     private val barometerData = mutableListOf<Array<String>>()
     private val allData = mutableListOf<Array<String>>()
 
-    // --- Transformacje ---
-    private var paramA: Double = 0.0
-    private var paramD: Double = 0.0 // Rotation Y
-    private var paramB: Double = 0.0 // Rotation X
-    private var paramE: Double = 0.0
-    private var paramC: Double = 0.0
-    private var paramF: Double = 0.0
-    private var worldFileLoaded = false
 
     // --- Sensory ---
     private var accelerometerSensor: Sensor? = null
@@ -139,7 +135,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener, FragmentManager.O
     // zmienne potrzebne do obsługi przycisków
     private var currentAppState: AppState = AppState.IDLE // Aktualny stan aplikacji
     private var selectedRoute: Route? = null // Aktualnie wybrana trasa (przechowuje MapPoint)
-    private var currentPointIndex: Int = -1
+    private var currentPointIndex: Int = 0
 
     // --- Ścieżka ---
     private var currentRelativeLogPath: String? = null
@@ -179,16 +175,21 @@ class MainActivity : AppCompatActivity(), SensorEventListener, FragmentManager.O
             if (WifiManager.SCAN_RESULTS_AVAILABLE_ACTION == intent.action) {
                 val success = intent.getBooleanExtra(WifiManager.EXTRA_RESULTS_UPDATED, false)
                 if (success) {
-                    Log.d(TAG, "WiFi: Otrzymano nowe wyniki skanowania.")
+                    Log.d("myWifiScan", "WiFi: Otrzymano nowe wyniki skanowania.")
                     processWifiScanResults()
-                    handler.postDelayed({
-                        if (isLogging) triggerWifiScan()
-                    }, 500)
+                    Log.d("myWifiScan", "WiFi: Zainicjowano nowe skanowanie, czas: ${System.currentTimeMillis()}")
+                    if (isLogging) {
+                        triggerWifiScan()
+                    }
                 } else {
-                    Log.d(TAG, "WiFi: Otrzymano stare (cached) wyniki skanowania.")
+                    Log.d("myWifiScan", "WiFi: Otrzymano stare (cached) wyniki skanowania.")
+                    Log.d("myWifiScan", "WiFi: Zainicjowano nowe skanowanie, czas: ${System.currentTimeMillis()}")
                     handler.postDelayed({
-                        if (isLogging) triggerWifiScan()
-                    }, 1000)
+                        if (isLogging) {
+                            Log.d("myWifiScan", "WiFi: Rozpoczęcie nowego skanowania o czasie: ${System.currentTimeMillis()}")
+                            triggerWifiScan()
+                        }
+                    }, 500)
                 }
             }
         }
@@ -280,87 +281,38 @@ class MainActivity : AppCompatActivity(), SensorEventListener, FragmentManager.O
 
         // --- Znajdowanie widoków z NOWEGO layoutu ---
         floorPlanImageView = findViewById(R.id.floorPlanImageView)
-        floorPlanImageView.setImageResource(R.drawable.gmach_f0_01)
         routeOverlayView = findViewById(R.id.routeOverlayView)
         toolbar = findViewById(R.id.toolbar)
 
         startButton = findViewById(R.id.startButton)
         nextButton = findViewById(R.id.nextButton)
         stopButton = findViewById(R.id.stopButton)
-//        selectRouteButton = findViewById(R.id.selectRouteButton)
-//        createRouteButton = findViewById(R.id.buttonShowCreateRoute)
-//        deleteRouteButton = findViewById(R.id.deleteRouteButton)
+        floorButtonsContainer = findViewById(R.id.floorButtonsContainer)
 
+        // setup toolbar
         setSupportActionBar(toolbar)
         supportActionBar?.setTitle("Pomiar Trasy")
 
-        // Ustawienie Komponentów UI ekranu głównego
+        // Ustawienie Komponentów UI ekranu głównego (bez przycisków wybierania piętra)
         setupMainButtons()
 
-        // Odpalenie parsowania pliku PGW (pozniej do usuniecia)
-        loadWorldFileParameters(this, "gmach_f0_01.pgw")
+        // --- Utwórz przyciski wyboru pięter ---
+        createFloorButtons()
 
-        // Pobranie wszystkich tras
-        routes = RouteStorage.loadRoutes(this)
+        // --- Ładowanie plików mapy i utworzenie MapConvertera ---
+        val pgwParameters = loadWorldFileParameters("gmach.pgw")
+        val bitmapDimensions = loadAllFloorPlanBitmaps()
 
-        val staticMarkers = geographicRoutePoints.map { mapPoint ->
-            Marker(point = mapPoint, state = MarkerState.PENDING)
+        // Utworzenie instancji MapConverter - potrzebne do konwersji współrzędnych
+        if (pgwParameters != null && bitmapDimensions != null) {
+            val (bitmapWidth, bitmapHeight) = bitmapDimensions
+            mapConverter = MapConverter(pgwParameters, bitmapWidth, bitmapHeight) // <-- TWORZYMY INSTANCJĘ Z POBRANYMI DANYMI
+            Log.i(TAG, "MapConverter utworzony pomyślnie.")
+        } else {
+            Log.e(TAG, "FATALNY BŁĄD: Nie udało się utworzyć MapConverter (brak PGW lub bitmapy). Aplikacja może nie działać poprawnie.")
+            Toast.makeText(this, "Błąd inicjalizacji mapy.", Toast.LENGTH_LONG).show()
         }
-        val staticRoute = Route(name = "Trasa Statyczna", markers = staticMarkers)
 
-        routes = routes + staticRoute
-
-
-        // --- Inicjowanie widoku dla tworzenia trasy
-        val inflater = LayoutInflater.from(this)
-        val createRouteView = inflater.inflate(R.layout.create_route_view, null)
-
-        // Dodaj go do głównego layoutu (np. FrameLayout)
-        val mainLayout = findViewById<FrameLayout>(R.id.mainContentContainer)
-        mainLayout.addView(createRouteView)
-
-        // Na początku ukryj ten widok
-        createRouteView.visibility = View.GONE
-
-        try {
-            val options = BitmapFactory.Options().apply {
-                inDensity = 1 // Mówimy Androidowi, żeby traktował zasób jak dla gęstości 1
-                inTargetDensity = 1 // Celujemy w gęstość 1
-                inScaled = false // NAJWAŻNIEJSZE: Wyłączamy automatyczne skalowanie gęstości
-            }
-            // Wczytujemy bitmapę z tymi opcjami, żeby dostać jej rzeczywiste wymiary plikowe
-            val bitmap = BitmapFactory.decodeResource(resources, R.drawable.gmach_f0_01, options)
-
-            if (bitmap != null) {
-                bitmapWidth = bitmap.width // Pobieramy szerokość z obiektu Bitmapy
-                bitmapHeight = bitmap.height // Pobieramy wysokość z obiektu Bitmapy
-                Log.i(
-                    TAG,
-                    "ORYGINALNE wymiary Bitmapy (z BitmapFactory.Options): $bitmapWidth x $bitmapHeight"
-                )
-
-                // Możesz teraz ustawić tę bitmapę na ImageView, jeśli nie robiłeś tego wcześniej.
-                // floorPlanImageView.setImageBitmap(bitmap) // Upewnij się, że ImageView dostaje obraz
-
-                // Zwolnienie zasobów bitmapy, jeśli nie jest używana bezpośrednio przez ImageView
-                // Jeśli ustawiasz ją w ImageView (jak w linii powyżej), Android tym zarządza.
-                // Jeśli nie, rozważ bitmap.recycle() po pobraniu wymiarów.
-                // Ale skoro wcześniej używałeś setImageResource, po prostu kontynuuj z wymiarami.
-
-            } else {
-                Log.e(
-                    TAG,
-                    "Nie udało się wczytać bitmapy z opcjami, aby uzyskać oryginalne wymiary. Wymiary bitmapy nieznane."
-                )
-                // Obsłuż błąd - np. pokaż Toast, wyłącz funkcjonalność mapową
-                bitmapWidth = 0 // Ustaw na 0, żeby uniemożliwić dalsze obliczenia
-                bitmapHeight = 0
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Błąd podczas pobierania oryginalnych wymiarów bitmapy", e)
-            bitmapWidth = 0 // Ustaw na 0
-            bitmapHeight = 0
-        }
         // nasluchwianie rezultatow z CreateRouteFragment
         supportFragmentManager.setFragmentResultListener("route_saved_key", this) { requestKey, bundle ->
             // Ta lambda (funkcja anonimowa) zostanie wywołana, gdy Fragment wyśle rezultat z tym kluczem
@@ -384,318 +336,459 @@ class MainActivity : AppCompatActivity(), SensorEventListener, FragmentManager.O
                 resetAppState() // Wróć do stanu głównego UI nawet przy błędzie zapisu
             }
         }
-    }
 
+        // Wczytaj trasy z pamięci trwałej
+        routes = RouteStorage.loadRoutes(this)
 
-    /**
-     * Przelicza współrzędne mapy (np. EPSG:2178) na współrzędne pikselowe obrazu.
-     * Zakłada, że parametry A, B, C, D, E, F zostały wcześniej wczytane z pliku world file.
-     * Używa uproszczonego wzoru dla obrazów nieobróconych (B=0, D=0).
-     * Zwraca obiekt Point(x, y) z koordynatami pikselowymi lub null w przypadku błędu.
-     */
-    private fun mapToPixel(mapX: Double, mapY: Double): ScreenPoint? {
-        if (!worldFileLoaded) {
-            Log.e(TAG, "Cannot perform mapToPixel: World file parameters not loaded.")
-            return null
+        this.currentFloor = floorFileMappingPng.keys.firstOrNull() ?: 0 // Ustaw na pierwsze zdefiniowane piętro lub 0
+        if (routes.isNotEmpty() && routes.first().markers.isNotEmpty()) {
+            // Jeśli jest domyślna trasa z punktami, ustaw początkowe piętro na piętro pierwszego punktu tej trasy
+            this.currentFloor = routes.first().markers.first().point.floor
+            Log.d(TAG, "Ustawiono początkowe piętro na podstawie pierwszej trasy: ${this.currentFloor}")
+        } else {
+            Log.d(TAG, "Brak tras lub pierwsza trasa jest pusta. Ustawiono początkowe piętro na domyślne: ${this.currentFloor}")
         }
 
-        // Sprawdzenie czy wyznacznik nie jest zbyt bliski zeru (czyli transformacja odwracalna)
-        val denominator = paramA * paramE - paramB * paramD
-        if (kotlin.math.abs(denominator) < 1e-12) {
-            Log.e(TAG, "Cannot perform mapToPixel: Transformation matrix is not invertible.")
-            return null
+
+        // Ustawienie początkowego stanu UI po wczytaniu tras i ustawieniu initial currentFloor
+        if (routes.isNotEmpty()) {
+            this.selectedRoute = routes.first() // Wybierz pierwszą trasę jako domyślną
+            this.currentPointIndex = 0 // Ustaw index początkowy dla wyświetlania (np. -1, bo nawigacja jeszcze nieaktywna)
+
+            // Wyświetl trasę dla początkowego piętra (displayGeographicRoute UŻYJE mapConvertera)
+            if (mapConverter != null) { // Upewnij się, że mapConverter jest dostępny
+                displayGeographicRoute(this.selectedRoute, this.currentPointIndex) // <-- WYWOŁANIE displayGeographicRoute
+            } else {
+                Log.e(TAG, "displayGeographicRoute: MapConverter jest nullem w onCreate po ładowaniu, nie mogę wyświetlić trasy.")
+            }
+
+            currentAppState = AppState.ROUTE_SELECTED // Ustaw stan aplikacji
+            supportActionBar?.setTitle(selectedRoute?.name) // Ustaw tytuł toolbar
+
+        } else {
+            // Stan, gdy brak wczytanych tras
+            this.selectedRoute = null
+            this.currentPointIndex = 0
+            routeOverlayView.clearRoute() // Wyczyść overlay
+            // Ustaw bitmapę dla domyślnego piętra nawet jeśli brak trasy
+            floorPlanBitmapMap[this.currentFloor]?.let {
+                floorPlanImageView.setImageBitmap(it)
+                Log.d(TAG, "Ustawiono bitmapę domyślnego piętra ($currentFloor) gdy brak tras.")
+            } ?: floorPlanImageView.setImageDrawable(null) // Ustaw bitmapę lub wyczyść jeśli brak
+
+            currentAppState = AppState.IDLE // Ustaw stan aplikacji
+            supportActionBar?.setTitle("Wybierz Trasę") // Ustaw ogólny tytuł
         }
 
-        // Pełny wzór odwrotnej transformacji affine
-        val deltaX = mapX - paramC
-        val deltaY = mapY - paramF
+        // --- Zaktualizuj stan wizualny przycisków pięter ---
+        updateFloorButtonState() // <-- WYWOŁANIE aktualizacji wyglądu przycisków pięter
 
-        val pixelX = (paramE * deltaX - paramB * deltaY) / denominator
-        val pixelY = (paramA * deltaY - paramD * deltaX) / denominator
-
-        return ScreenPoint(pixelX.toFloat(), pixelY.toFloat())
     }
 
+    private fun updateRouteState(route: Route, currentTargetIndex: Int) {
+        Log.d(TAG, "updateRouteState wywołane dla trasy '${route.name}' z target index $currentTargetIndex")
 
-    /**
-     * Processes a given Route object, converts its markers' points from raw map
-     * coordinates (Double) to screen pixel coordinates (Float), and sets it on
-     * the RouteOverlayView for display after the view is laid out.
-     *
-     * @param routeToDisplay The Route object to display, or null to clear the display.
-     * Assumes points within this Route are Point(Double, Double) raw map coordinates.
-     */
-    fun displayGeographicRoute(
-        routeToDisplay: Route?,
-        currentTargetIndex: Int = -1
-    ) { // Przyjmuje Route (z MapPoint)
-        val routeOverlayView =
-            findViewById<RouteOverlayView>(R.id.routeOverlayView) // Pobierz widok
+        val totalMarkers = route.markers.size // Całkowita liczba punktów w trasie
 
-        // 1. Obsługa przypadku null i brak PGW
-        if (routeToDisplay == null || !worldFileLoaded) {
-            if (routeToDisplay == null) Log.i(TAG, "Attempting to clear route display.")
-            if (!worldFileLoaded) Log.e(
-                TAG,
-                "Cannot display route: World file parameters not loaded."
-            )
-            // Wyczyść przekazując puste listy ScreenPoint i MarkerState do RouteOverlayView
-            routeOverlayView.setScreenRouteData(emptyList(), emptyList())
-            if (!worldFileLoaded) Toast.makeText(
-                this,
-                "Błąd: Parametry mapy nie wczytane.",
-                Toast.LENGTH_SHORT
-            ).show()
+        // Sprawdzamy, czy index celu jest w ogóle sensowny
+        if (currentTargetIndex < 0 || currentTargetIndex >= totalMarkers) {
+            Log.w(TAG, "updateRouteState: currentTargetIndex ($currentTargetIndex) poza zakresem trasy (${totalMarkers} punktów). Ustawiam wszystkie na PENDING (chyba że są końcowe).")
+            // Jeśli index celu jest nieprawidłowy, wszystkie punkty po prostu powinny być PENDING
+            // chyba że są ostatnim punktem trasy.
+        }
+
+
+        // Iteruj przez WSZYSTKIE markery w pełnej liście trasy
+        route.markers.forEachIndexed { index, marker ->
+            val newState: MarkerState
+
+            // --- Ustawienie podstawowego stanu (VISITED, CURRENT, PENDING) ---
+            if (index < currentTargetIndex) {
+                // Punkty przed aktualnym celem są ODWIEDZONE (jeśli index celu jest sensowny)
+                newState = if (currentTargetIndex >= 0 && currentTargetIndex <= totalMarkers) {
+                    MarkerState.VISITED
+                } else {
+                    MarkerState.PENDING // Jeśli index celu poza zakresem, nic nie jest odwiedzone przez logikę nawigacji
+                }
+
+            } else if (index == currentTargetIndex && currentTargetIndex < totalMarkers) {
+                // Punkt o aktualnym indexie celu jest AKTUALNYM CELEM
+                newState = MarkerState.CURRENT
+
+            } else { // index > currentTargetIndex
+                // Punkty po aktualnym celu są OCZEKUJĄCE
+                newState = MarkerState.PENDING
+            }
+
+            // --- Nadpisanie stanu dla OSTATNIEGO PUNKTU CAŁEJ TRASY ---
+            // Ten punkt zawsze ma stan END, niezależnie od tego, czy został już "odwiedzony"
+            // w sensie nawigacji (może być VISITED + END, CURRENT + END, PENDING + END).
+            // Stan END ma najwyższy priorytet wizualny (czarny kolor).
+            if (index == totalMarkers - 1) { // Sprawdź, czy to ostatni punkt na liście
+                // Jeśli to ostatni punkt, ustaw jego stan na END
+                marker.state = MarkerState.END // Nadpisz podstawowy stan na END
+                Log.d(TAG, "updateRouteState: Marker ${index} ustawiono na END (ostatni punkt trasy).")
+            } else {
+                // Dla wszystkich innych punktów użyj podstawowego stanu
+                marker.state = newState
+            }
+
+            // TODO: Stan LAST_ON_FLOOR (fioletowy) będzie obsługiwany WIZUALNIE w onDraw RouteOverlayView,
+            // a nie jako stan w MarkerState. Musimy to wykryć w onDraw.
+        }
+
+        Log.d(TAG, "updateRouteState: Zakończono aktualizację stanów markerów.")
+    }
+
+    private fun createFloorButtons() {
+        Log.d(TAG, "Tworzę przyciski wyboru pięter.")
+        floorButtonsContainer.removeAllViews() // Wyczyść kontener na wypadek ponownego wywołania
+        floorButtons.clear()
+
+        // Pobierz i posortuj numery pięter zdefiniowane w mapie floorFileMappingPng
+        val sortedFloors = floorFileMappingPng.keys.sorted()
+
+        // Sprawdź, czy są zdefiniowane piętra
+        if (sortedFloors.isEmpty()) {
+            Log.w(TAG, "Brak zdefiniowanych pięter w floorFileMappingPng. Nie mogę utworzyć przycisków.")
             return
         }
 
-        // 2. Blok kodu, który wykonuje faktyczne PRZELICZENIE i RYSOWANIE
-        // Ten blok potrzebuje wymiarów widoku, dlatego jest w lamdzie/funkcji.
-        val performConversionAndSet = {
-            // Sprawdzamy, czy widok na pewno ma wymiary (powinno być OK, jeśli tu dotarliśmy po layoucie)
-            // i czy wymiary bitmapy są znane
-
-            Log.d(TAG, "--- Rozpoczęcie Konwersji dla trasy: ${routeToDisplay?.name} ---")
-
-            // Loguj WSZYSTKIE PARAMETRY PGW używane w mapToPixel
-            Log.d(
-                TAG,
-                "PGW Parametry: A=$paramA, B=$paramB, C=$paramC, D=$paramD, E=$paramE, F=$paramF"
-            )
-
-            // Loguj WYMIARY używane w convertToScreenCoordinates
-            Log.d(
-                TAG,
-                "Wymiary używane w konwersji: Bitmapa (${this.bitmapWidth}x${this.bitmapHeight}), Widok (${routeOverlayView.width}x${routeOverlayView.height})"
-            )
-
-            if (routeOverlayView.width > 0 && routeOverlayView.height > 0 && bitmapWidth > 0 && bitmapHeight > 0) {
-                // Te listy będą przechowywać ScreenPoint (piksele ekranu) i stany do przekazania do RouteOverlayView
-                val screenPixelPoints = mutableListOf<ScreenPoint>()
-                val markerStatesForDrawing = mutableListOf<MarkerState>()
-
-
-                // --- ITERUJEMY PRZEZ MARKERY W PRZEKAZANYM OBIEKCIE ROUTE (z MapPoint(Double, Double)) ---
-                for ((index, marker) in routeToDisplay.markers.withIndex()) {
-                    // Pobieramy SUROWE współrzędne mapowe (Double) z MapPoint w Markeri
-                    val mapPoint_double = marker.point // To jest MapPoint(Double, Double)
-                    val mapX_double = mapPoint_double.x // Double
-                    val mapY_double = mapPoint_double.y // Double
-
-                    Log.d(
-                        TAG,
-                        "Konwersja Punktu: Surowe Double ($mapX_double, $mapY_double)"
-                    ) // Debugowanie
-
-
-                    // Etap 1: Surowe Double -> Piksele obrazu mapy PNG (ScreenPoint)
-                    // mapToPixel przyjmuje Double i zwraca ScreenPoint(Float, Float) (piksele obrazu)
-                    val imagePixelPoint_float = mapToPixel(mapX_double, mapY_double)
-
-                    if (imagePixelPoint_float != null) {
-                        Log.d(
-                            TAG,
-                            "  mapToPixel -> Piksele Obrazu PNG (${imagePixelPoint_float.x}, ${imagePixelPoint_float.y})"
-                        ) // Debugowanie
-
-                        // Etap 2: Piksele obrazu mapy PNG (ScreenPoint) -> Piksele ekranu (ScreenPoint)
-                        // convertToScreenCoordinates przyjmuje Float, więc bierzemy x/y z ScreenPoint z mapToPixel
-                        val screenPoint_float = convertToScreenCoordinates(
-                            imagePixelPoint_float.x, // Wejście to ScreenPoint z mapToPixel, używamy jego Floatów
-                            imagePixelPoint_float.y,
-                            bitmapWidth = this.bitmapWidth, // Rzeczywiste wymiary bitmapy
-                            bitmapHeight = this.bitmapHeight,
-                            viewWidth = routeOverlayView.width, // Rzeczywiste wymiary widoku
-                            viewHeight = routeOverlayView.height // Rzeczywiste wymiary widoku
-                        )
-
-                        Log.d(
-                            TAG,
-                            "  convertToScreenCoordinates -> Piksele Ekranu (${screenPoint_float.x}, ${screenPoint_float.y})"
-                        ) // Debugowanie
-
-                        val state = when {
-                            index <= currentTargetIndex -> MarkerState.VISITED // Punkty przed celem są odwiedzone
-                            index == currentTargetIndex + 1 -> MarkerState.CURRENT // Punkt celu jest aktualny
-                            else -> MarkerState.PENDING // Punkty po celu oczekują
-                        }
-                        markerStatesForDrawing.add(state)
-                        screenPixelPoints.add(screenPoint_float)
-
-                        // --- Dodajemy ScreenPoint (piksele ekranu) i stan do list do rysowania ---
-//                        screenPixelPoints.add(screenPoint_float) // Dodajemy ScreenPoint (piksele ekranu)
-//                        markerStatesForDrawing.add(marker.state) // Dodajemy odpowiadający stan
-                    } else {
-                        Log.w(
-                            TAG,
-                            "Could not convert map point (${mapX_double}, ${mapY_double}) to image pixel (mapToPixel returned null)."
-                        )
+        for (floor in sortedFloors) {
+            // Utwórz nowy przycisk
+            val button = Button(this).apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    0, // Szerokość: 0dp
+                    LinearLayout.LayoutParams.WRAP_CONTENT, // Wysokość: wrap_content
+                    1f // Waga: 1, żeby przyciski rozciągnęły się na całą szerokość kontenera
+                ).apply {
+                    // Dodaj mały margines między przyciskami, pomijając ostatni
+                    if (floor != sortedFloors.last()) {
+                        marginEnd = 4.dpToPx()
                     }
                 }
+                text = floor.toString() // Tekst przycisku to numer piętra
+                isAllCaps = false // Niech tekst będzie taki jak wpisano
+                // TODO: Możesz dodać Style do przycisków, żeby wyglądały lepiej i reagowały na isSelected
 
-                // --- PO PRZELICZENIU WSZYSTKICH PUNKTÓW ---
-                if (screenPixelPoints.isNotEmpty()) {
-                    // Przekazujemy gotowe listy ScreenPoint (piksele ekranu) i MarkerState do RouteOverlayView
-                    routeOverlayView.setScreenRouteData(screenPixelPoints, markerStatesForDrawing)
-
-                    Log.i(
-                        TAG,
-                        "Route '${routeToDisplay.name}' processed (${routeToDisplay.markers.size} MapPoints) and set for display (${screenPixelPoints.size} ScreenPoints)."
-                    )
-                } else {
-                    Log.w(
-                        TAG,
-                        "No valid screen pixel points could be created for route '${routeToDisplay.name}'. Clearing display."
-                    )
-                    routeOverlayView.clearRoute() // Użyj metody do czyszczenia
+                // Ustaw listener kliknięcia dla każdego przycisku
+                setOnClickListener {
+                    // --- Listener kliknięcia przycisku piętra ---
+                    Log.d(TAG, "Kliknięto przycisk piętra: $floor")
+                    // Sprawdź, czy kliknięto przycisk innego piętra niż aktualne
+                    if (this@MainActivity.currentFloor != floor) {
+                        this@MainActivity.currentFloor = floor // Zaktualizuj aktualne piętro
+                        updateFloorButtonState() // Zaktualizuj wizualny stan przycisków (który jest "wciśnięty")
+                        // Wyświetl trasę dla nowego piętra (jeśli jest wybrana trasa)
+                        if (this@MainActivity.selectedRoute != null) {
+                            // Wywołaj displayGeographicRoute - ta metoda teraz sama użyje currentFloor
+                            displayGeographicRoute(this@MainActivity.selectedRoute, this@MainActivity.currentPointIndex)
+                        } else {
+                            // Jeśli brak wybranej trasy, po prostu zmień wyświetlany plan piętra
+                            routeOverlayView.clearRoute() // Wyczyść overlay
+                            // Ustaw bitmapę dla nowego piętra
+                            floorPlanBitmapMap[this@MainActivity.currentFloor]?.let {
+                                floorPlanImageView.setImageBitmap(it)
+                            } ?: floorPlanImageView.setImageDrawable(null) // Ustaw bitmapę lub wyczyść jeśli brak
+                            routeOverlayView.invalidate() // Wymuś przerysowanie overlay (pustego)
+                        }
+                        // TODO: Ewentualnie zaktualizuj UI stanu aplikacji (np. tytuł toolbar, komunikaty)
+                    }
                 }
+            }
+            // Dodaj utworzony przycisk do kontenera LinearLayout
+            floorButtonsContainer.addView(button)
+            // Zapisz przycisk w mapie, używając numeru piętra jako klucza
+            floorButtons[floor] = button
+        }
+        Log.d(TAG, "Zakończono tworzenie przycisków pięter. Utworzono ${floorButtons.size} przycisków.")
+    }
 
+    private fun updateFloorButtonState() {
+        Log.d(TAG, "Aktualizuję stan przycisków pięter. Aktualne piętro: $currentFloor")
+        // Iteruj przez wszystkie przyciski pięter przechowywane w mapie
+        for ((floor, button) in floorButtons) {
+            if (floor == currentFloor) {
+                // To jest przycisk aktualnego piętra - ustawiamy go na "wciśnięty" (selected = true)
+                button.isSelected = true // Stan 'selected' można wykorzystać w selektorach tła/koloru tekstu w styles.xml
+                // Możesz też bezpośrednio zmienić wygląd:
+                button.setBackgroundColor(ContextCompat.getColor(this, R.color.colorPrimary)) // Zmień kolor tła na główny kolor aplikacji
+                button.setTextColor(ContextCompat.getColor(this, android.R.color.white)) // Zmień kolor tekstu na biały
             } else {
-                // Logujemy, jeśli blok performConversionAndSet został wywołany, ale wymiary były 0
-                Log.e(
-                    TAG,
-                    "performRouteDisplay called but view or bitmap dimensions are not available! " +
-                            "View: ${routeOverlayView.width}x${routeOverlayView.height}, " +
-                            "Bitmap: ${bitmapWidth}x${bitmapHeight}"
-                )
-                routeOverlayView.clearRoute() // Wyczyść na wszelki wypadek
-                Toast.makeText(this, "Błąd: Wymiary widoku mapy niedostępne.", Toast.LENGTH_SHORT)
-                    .show()
+                // To nie jest przycisk aktualnego piętra - ustawiamy go na "normalny" (selected = false)
+                button.isSelected = false
+                // Przywróć normalny wygląd:
+                // Użyj kolorów, które pasują do Twojego motywu/stylu przycisków Material Design
+                button.setBackgroundColor(ContextCompat.getColor(this, R.color.my_default_button_color)) // Użyj domyślnego koloru tła przycisku Material
+                button.setTextColor(ContextCompat.getColor(this, android.R.color.black)) // Użyj domyślnego koloru tekstu przycisku (lub koloru ze stylu)
             }
         }
-        // --- KONIEC BLOKU performConversionAndSet ---
+        // Po zmianie wyglądu przycisków, wymuś przerysowanie kontenera (może nie być konieczne, ale dla pewności)
+        floorButtonsContainer.invalidate()
+        floorButtonsContainer.requestLayout() // Wymuś ponowne obliczenie layoutu
+    }
+
+    fun displayGeographicRoute(routeToDisplay: Route?, currentTargetIndex: Int = 0) { // Zmieniono domyślną wartość na 0
+        Log.d(TAG, "displayGeographicRoute wywołane. Trasa: ${routeToDisplay?.name}, currentTargetIndex (cały route): ${this.currentPointIndex}, Rysuję dla PIĘTRA: $currentFloor") // Logujemy this.currentPointIndex
 
 
-        // 3. Logika czekania na layout/wykonania od razu
-        // Sprawdź, czy widok ma wymiary (jest gotowy po layoucie)
-        if (routeOverlayView.width > 0 && routeOverlayView.height > 0) {
-            // Jeśli widok ma już wymiary, od razu wykonaj przeliczenie i rysowanie
-            Log.d(
-                TAG,
-                "View already laid out. Performing route display immediately for '${routeToDisplay.name}'."
-            )
-            performConversionAndSet()
+        // --- Ustaw odpowiednią bitmapę planu piętra w ImageView ---
+        floorPlanBitmapMap[currentFloor]?.let {
+            floorPlanImageView.setImageBitmap(it)
+            Log.d(TAG, "Ustawiono bitmapę dla pięcia: $currentFloor")
+        } ?: run {
+            floorPlanImageView.setImageDrawable(null)
+            Log.w(TAG, "Brak bitmapy planu piętra dla piętra: $currentFloor. ImageView wyczyszczone.")
+            routeOverlayView.clearRoute() // Upewnij się, że overlay jest też czyszczony
+            routeOverlayView.invalidate()
+            return // Przerwij, bo brak mapy do rysowania
+        }
+
+
+        routeOverlayView.clearRoute() // Wyczyść poprzednie rysunki z overlay
+
+
+        // Sprawdź, czy trasa istnieje i ma punkty
+        if (routeToDisplay == null || routeToDisplay.markers.isEmpty()) {
+            Log.w(TAG, "displayGeographicRoute: Brak trasy do wyświetlenia lub trasa jest pusta.")
+            // Tutaj też musimy przekazać pełne 5 argumentów, nawet jeśli lista markerów jest pusta
+            // Poprawione wywołanie setRouteAndStates dla pustej trasy/pustego piętra
+            routeOverlayView.setRouteAndStates(emptyList(), -1, mapConverter!!, -1, 0, null) // 0 jako totalRouteMarkerCount gdy trasa pusta
+            routeOverlayView.invalidate()
+            return
+        }
+
+        // --- WAŻNE: Zaktualizuj stany WSZYSTKICH markerów trasy przed filtrowaniem ---
+        // Ta metoda modyfikuje stany markerów BEZPOŚREDNIO w obiekcie routeToDisplay.
+        updateRouteState(routeToDisplay, this.currentPointIndex) // Użyj aktualnego currentPointIndex z MainActivity
+
+
+        // --- Find the last marker of the PREVIOUS floor (if applicable) ---
+        var previousFloorLastMarker: Marker? = null // Zmienna do przechowywania markera
+        // Sprawdź, czy w ogóle ma sens szukać poprzedniego piętra (czy bieżące piętro nie jest pierwszym piętrem trasy)
+        val firstMarkerOfEntireRoute = routeToDisplay.markers.first() // Pierwszy punkt całej trasy
+        if (currentFloor != firstMarkerOfEntireRoute.point.floor) {
+            // Jesteśmy na piętrze innym niż pierwsze piętro trasy, więc może istnieć poprzednie piętro z punktami.
+
+            // Znajdź index PIERWSZEGO markera NA OBECNYM PIĘTRZE w PEŁNEJ liście trasy.
+            // Użyjemy tego indexu do znalezienia markera przed nim.
+            val indexOfFirstMarkerOfCurrentFloorInFullRoute = routeToDisplay.markers.indexOfFirst { it.point.floor == currentFloor }
+
+            // Sprawdź, czy znaleziono pierwszy marker na obecnym piętrze I czy nie jest to pierwszy marker CAŁEJ trasy (czyli index > 0).
+            if (indexOfFirstMarkerOfCurrentFloorInFullRoute > 0) {
+                // Marker poprzedniego piętra jest bezpośrednio przed pierwszym punktem obecnego piętra
+                // w PEŁNEJ liście markerów trasy.
+                previousFloorLastMarker = routeToDisplay.markers[indexOfFirstMarkerOfCurrentFloorInFullRoute - 1]
+                Log.d(TAG, "displayGeographicRoute: Znaleziono ostatni marker poprzedniego piętra (${previousFloorLastMarker?.point?.floor}): ${previousFloorLastMarker?.point}")
+
+                // Stan tego markera został już zaktualizowany przez updateRouteState (powinien być VISITED lub END)
+                // W Overlayu i tak zawsze rysujemy go jako VISITED (zielony) (zgodnie z Etapem 11.1).
+            } else {
+                // To by się zdarzyło, gdyby pierwszy marker na obecnym piętrze był jednocześnie pierwszym markerem CAŁEJ trasy,
+                // ale weszliśmy do tego bloku, bo currentFloor != firstMarkerOfEntireRoute.point.floor.
+                // To nie powinno się zdarzyć przy prawidłowej logice, ale logujemy jako zabezpieczenie.
+                Log.w(TAG, "displayGeographicRoute: Wykryto nieoczekiwany scenariusz - currentFloor != pierwszemu piętru trasy, ale pierwszy marker na currentFloor ma index 0 w całej trasie.")
+                previousFloorLastMarker = null // Upewnij się, że jest null
+            }
         } else {
-            // Jeśli widok nie ma jeszcze wymiarów, dodaj listenera, żeby poczekać na layout
-            Log.d(
-                TAG,
-                "View not yet laid out. Adding OnGlobalLayoutListener for '${routeToDisplay.name}'."
-            )
-            routeOverlayView.viewTreeObserver.addOnGlobalLayoutListener(
-                object : ViewTreeObserver.OnGlobalLayoutListener {
-                    override fun onGlobalLayout() {
-                        // Usuwamy listenera od razu po pierwszym wywołaniu po layoucie
-                        routeOverlayView.viewTreeObserver.removeOnGlobalLayoutListener(this)
+            // Jesteśmy na pierwszym piętrze trasy, więc nie ma poprzedniego piętra z punktami do wyświetlenia.
+            Log.d(TAG, "displayGeographicRoute: Jesteśmy na pierwszym piętrze trasy (${currentFloor}). Brak ostatniego punktu poprzedniego piętra do wyświetlenia.")
+            previousFloorLastMarker = null // Upewnij się, że jest null
+        }
 
-                        // Teraz, gdy widok ma wymiary, wykonaj przeliczenie i rysowanie
-                        Log.d(
-                            TAG,
-                            "Layout finished. Performing route display from listener for '${routeToDisplay.name}'."
-                        )
-                        performConversionAndSet()
-                    }
-                }
+
+        // --- PRZETWARZAJ I ZBIERAJ TYLKO MARKERY Z AKTUALNEGO PIĘTRA ---
+        val markersOnCurrentFloor = routeToDisplay.markers.filter { it.point.floor == currentFloor }
+        Log.d(TAG, "displayGeographicRoute: Znaleziono ${markersOnCurrentFloor.size} punktów trasy na aktualnym piętrze ($currentFloor).")
+
+
+        // Jeśli na bieżącym piętrze nie ma markerów trasy (poza potencjalnym punktem z poprzedniego piętra)
+        if (markersOnCurrentFloor.isEmpty()) {
+            Log.w(TAG, "displayGeographicRoute: Brak punktów trasy na aktualnym piętrze ($currentFloor).")
+            // W tym przypadku przekazujemy pustą listę markerów na piętrze, ale PRZEKAZUJEMY TEŻ previousFloorLastMarker
+            if (mapConverter != null) {
+                // Poprawione wywołanie setRouteAndStates dla pustego piętra (z poprzednim punktem lub bez)
+                routeOverlayView.setRouteAndStates(
+                    emptyList(), // markersOnCurrentFloor (pusta)
+                    -1,          // currentTargetIndexOnCurrentFloor (brak celu)
+                    mapConverter!!, // mapConverter
+                    -1,          // lastMarkerIndexOnCurrentFloor (brak ostatniego)
+                    routeToDisplay.markers.size, // totalRouteMarkerCount (całkowita liczba z PEŁNEJ trasy)
+                    previousFloorLastMarker // <-- PRZEKAŻ ZNALEZIONY PUNKT POPRZEDNIEGO PIĘTRA (lub null)
+                )
+                Log.d(TAG, "displayGeographicRoute: Przekazano dane (puste piętro) do RouteOverlayView.")
+            } else {
+                Log.e(TAG, "displayGeographicRoute: MapConverter jest nullem, nie mogę ustawić danych w Overlay (puste piętro).")
+                routeOverlayView.clearRoute() // Upewnij się, że overlay jest czyszczony
+            }
+            routeOverlayView.invalidate()
+            return // Zakończ wykonywanie funkcji, bo na tym piętrze nie ma markerów trasy (poza poprzednim)
+        }
+
+
+        // --- Kod wykonuje się TYLKO GDY markersOnCurrentFloor NIE JEST PUSTE ---
+
+
+        // --- Znajdź odpowiadający index currentTargetIndex W RAMACH markersOnCurrentFloor ---
+        // currentPointIndex to index w PEŁNEJ liście trasy. Musimy znaleźć ten marker,
+        // a następnie jego index w przefiltrowanej liście markersOnCurrentFloor.
+        val currentTargetMarkerInFullRoute = if (this.currentPointIndex != -1 && this.currentPointIndex < routeToDisplay.markers.size) {
+            routeToDisplay.markers[this.currentPointIndex] // Pobierz marker celu z PEŁNEJ listy
+        } else null // Będzie null, jeśli currentPointIndex poza zakresem lub -1
+
+        // Znajdź index tego markera w przefiltrowanej liście (markersOnCurrentFloor)
+        // Używamy indexOfFirst { } żeby znaleźć po punkcie, na wypadek duplikatów markerów z tym samym punktem na różnych piętrach (choć to rzadkie)
+        val currentTargetIndexOnCurrentFloor = if (currentTargetMarkerInFullRoute != null && currentTargetMarkerInFullRoute.point.floor == currentFloor) {
+            markersOnCurrentFloor.indexOfFirst { it.point == currentTargetMarkerInFullRoute.point }
+            // Jeśli marker celu istnieje w pełnej trasie, jest na bieżącym piętrze, znajdź jego index w przefiltrowanej liście
+        } else -1 // Jeśli marker celu nie istnieje, nie jest na bieżącym piętrze, lub currentPointIndex był -1/poza zakresem
+
+
+        // --- Znajdź index OSTATNIEGO MARKERA NA AKTUALNYM PIĘTRZE (w ramach markersOnCurrentFloor) ---
+        // Musimy znaleźć ostatni punkt w PEŁNEJ trasie, który jest na currentFloor.
+        // Potem znaleźć jego index w przefiltrowanej liście markersOnCurrentFloor.
+        val lastMarkerOnCurrentFloorInFullRoute = routeToDisplay.markers
+            .filter { it.point.floor == currentFloor } // Filtruj wszystkie markery trasy na obecne piętro
+            .lastOrNull() // Weź ostatni z nich
+
+        // Znajdź index tego ostatniego markera na piętrze w przefiltrowanej liście (markersOnCurrentFloor)
+        val lastMarkerIndexOnCurrentFloor = if (lastMarkerOnCurrentFloorInFullRoute != null) {
+            markersOnCurrentFloor.indexOfFirst { it.point == lastMarkerOnCurrentFloorInFullRoute.point } // Znajdź index w przefiltrowanej liście
+        } else -1 // Jeśli nie ma markerów na tym piętrze, lastMarkerOnCurrentFloorInFullRoute będzie null
+
+
+        // --- Rysowanie na RouteOverlayView ---
+        // Przekazujemy do RouteOverlayView:
+        // 1. Przefiltrowaną listę markerów (tylko z aktualnego piętra).
+        // 2. Index aktualnego celu W RAMACH TEJ PRZEFILTROWANEJ LISTY.
+        // 3. Instancję MapConvertera.
+        // 4. Index ostatniego markera NA TYM PIĘTRZE W RAMACH TEJ PRZEFILTROWANEJ LISTY.
+        // 5. Całkowitą liczbę markerów w pełnej trasie (może się przydać dla stanu END, jeśli go nie ma w MarkerState).
+        // 6. Ostatni punkt poprzedniego piętra (lub null).
+
+        if (mapConverter != null) { // Upewnij się, że mapConverter jest dostępny
+            // Poprawione główne wywołanie setRouteAndStates - dodajemy previousFloorLastMarker
+            routeOverlayView.setRouteAndStates(
+                markersOnCurrentFloor, // Przefiltrowana lista (niepusta w tym bloku)
+                currentTargetIndexOnCurrentFloor, // Index celu W przefiltrowanej liście
+                mapConverter!!, // Konwerter
+                lastMarkerIndexOnCurrentFloor, // Index ostatniego na piętrze W przefiltrowanej liście
+                routeToDisplay.markers.size, // Całkowita liczba punktów w trasie
+                previousFloorLastMarker // <-- PRZEKAŻ ZNALEZIONY PUNKT POPRZEDNIEGO PIĘTRA (lub null)
             )
+            Log.d(TAG, "displayGeographicRoute: Przekazano dane (z markerami na piętrze) do RouteOverlayView.")
+
+        } else {
+            Log.e(TAG, "displayGeographicRoute: MapConverter jest nullem, nie mogę ustawić danych w Overlay (z markerami na piętrze).")
+            routeOverlayView.clearRoute() // Upewnij się, że overlay jest czyszczony
+        }
+
+
+        // Wymuś przerysowanie Overlay
+        routeOverlayView.invalidate()
+
+        Log.d(TAG, "displayGeographicRoute: Zakończono konfigurację rysowania dla piętra: $currentFloor.")
+    }
+
+    private fun loadWorldFileParameters(fileName: String): WorldFileParameters? {
+        Log.d(TAG, "Attempting to load world file from assets: $fileName")
+        val assetManager = assets
+
+        try {
+            val inputStream = assetManager.open(fileName)
+            BufferedReader(InputStreamReader(inputStream)).use { reader ->
+                val lines = reader.readLines()
+
+                if (lines.size == 6) {
+                    try {
+                        val a = lines[0].trim().toDouble()
+                        val b = lines[2].trim().toDouble()
+                        val c = lines[4].trim().toDouble()
+                        val d = lines[1].trim().toDouble()
+                        val e = lines[3].trim().toDouble()
+                        val f = lines[5].trim().toDouble()
+
+                        Log.i(TAG, "World file '$fileName' loaded successfully from assets.")
+                        Log.d(TAG, "Params: A=$a, B=$b, C=$c, D=$d, E=$e, F=$f")
+                        // ZWRÓĆ OBIEKT WorldFileParameters
+                        return WorldFileParameters(a, b, c, d, e, f) // <-- ZWRACAMY OBIEKT
+
+                    } catch (e: NumberFormatException) {
+                        Log.e(TAG, "Error parsing double from world file '$fileName': ${e.message}", e)
+                        return null
+                    }
+                } else {
+                    Log.e(TAG, "World file '$fileName' has ${lines.size} lines, expected 6.")
+                    return null
+                }
+            }
+        } catch (e: IOException) {
+            Log.e(TAG, "Error reading world file from assets: $fileName", e)
+            return null
+        } catch (e: Exception) {
+            Log.e(TAG, "Unexpected error loading world file from assets: $fileName", e)
+            return null
         }
     }
 
-    private fun convertToScreenCoordinates(
-        bitmapX: Float,
-        bitmapY: Float,
-        bitmapWidth: Int,
-        bitmapHeight: Int,
-        viewWidth: Int,
-        viewHeight: Int
-    ): ScreenPoint {
-        val scale = minOf(viewWidth.toFloat() / bitmapWidth, viewHeight.toFloat() / bitmapHeight)
+    private fun loadAllFloorPlanBitmaps(): Pair<Int, Int>? {
+        Log.d(TAG, "Rozpoczynam ładowanie bitmap planów pięter dla wszystkich pięter.")
+        floorPlanBitmapMap.clear() // Wyczyść poprzednią mapę bitmap
 
-        val dx = (viewWidth - bitmapWidth * scale) / 2f
-        val dy = (viewHeight - bitmapHeight * scale) / 2f
+        var bitmapWidth = 0
+        var bitmapHeight = 0
+        var firstBitmapLoaded = false
 
-        val screenX = bitmapX * scale + dx
-        val screenY = bitmapY * scale + dy
+        // Iteruj przez zdefiniowane mapowania piętro -> plik PNG
+        for ((floor, pngFileName) in floorFileMappingPng) {
+            val bitmap = loadBitmapFromAssets(pngFileName) // Użyj funkcji ładowania pojedynczej bitmapy
+            if (bitmap != null) {
+                floorPlanBitmapMap[floor] = bitmap // Zapisz bitmapę w mapie
+                // Pobierz wymiary z pierwszej załadowanej bitmapy (bo wszystkie mają być takie same)
+                if (!firstBitmapLoaded) {
+                    bitmapWidth = bitmap.width
+                    bitmapHeight = bitmap.height
+                    firstBitmapLoaded = true
+                    Log.d(TAG, "Pobrane wymiary bitmapy: ${bitmapWidth}x${bitmapHeight}")
+                }
+            } else {
+                Log.e(TAG, "Bitmap for floor $floor ($pngFileName) could not be loaded.")
+            }
+        }
 
-        return ScreenPoint(screenX, screenY)
+        Log.d(TAG, "Zakończono ładowanie bitmap pięter. Załadowano ${floorPlanBitmapMap.size} bitmap.")
+
+        // Zwróć wymiary bitmapy jeśli załadowano co najmniej jedną, inaczej null
+        return if (firstBitmapLoaded) Pair(bitmapWidth, bitmapHeight) else null
     }
 
-    private fun loadWorldFileParameters(context: Context, filename: String) {
-        Log.d(TAG, "Attempting to load world file: $filename")
-        val assetManager = context.assets
-        val params = mutableListOf<Double>()
+    private fun loadBitmapFromAssets(fileName: String): Bitmap? {
+        Log.d(TAG, "Attempting to load bitmap from assets: $fileName")
+        val assetManager = assets // Pobierz AssetManager z kontekstu Activity
+
         try {
-            // Używamy 'use' aby zapewnić automatyczne zamknięcie strumieni
-            assetManager.open(filename).use { inputStream ->
-                InputStreamReader(inputStream).use { inputStreamReader ->
-                    BufferedReader(inputStreamReader).use { reader ->
-                        for (i in 1..6) {
-                            val line = reader.readLine()
-                            if (line != null) {
-                                try {
-                                    params.add(line.toDouble())
-                                    Log.d(TAG, "Read line $i: $line")
-                                } catch (e: NumberFormatException) {
-                                    Log.e(
-                                        TAG,
-                                        "Error parsing line $i ('$line') to Double in $filename",
-                                        e
-                                    )
-                                    worldFileLoaded = false
-                                    return // Przerwij wczytywanie przy błędzie formatu
-                                }
-                            } else {
-                                Log.e(
-                                    TAG,
-                                    "Error reading line $i from $filename: Unexpected end of file"
-                                )
-                                worldFileLoaded = false
-                                return // Przerwij, jeśli plik jest za krótki
-                            }
-                        }
-                    }
-                }
-            }
+            // Otwórz InputStream do pliku w assets
+            val inputStream = assetManager.open(fileName)
+            // Dekoduj InputStream na obiekt Bitmap
+            val bitmap = BitmapFactory.decodeStream(inputStream)
+            // Zamknij strumień
+            inputStream.close()
 
-            if (params.size == 6) {
-                paramA = params[0]
-                paramD = params[1] // Uwaga na kolejność D i B w pliku!
-                paramB = params[2]
-                paramE = params[3]
-                paramC = params[4]
-                paramF = params[5]
-                worldFileLoaded = true
-                Log.i(TAG, "World file '$filename' loaded successfully.")
-                Log.d(
-                    TAG,
-                    "Params: A=$paramA, B=$paramB, C=$paramC, D=$paramD, E=$paramE, F=$paramF"
-                )
-
-                // Sprawdzenie czy obraz nie jest obrócony (B i D bliskie zeru)
-                if (kotlin.math.abs(paramB) > 1e-9 || kotlin.math.abs(paramD) > 1e-9) {
-                    Log.w(
-                        TAG,
-                        "World file indicates image rotation (B or D is non-zero). Simple transformation formula might be inaccurate."
-                    )
-                }
-                // Sprawdzenie czy E jest ujemne
-                if (paramE >= 0) {
-                    Log.w(
-                        TAG,
-                        "Parameter E (line 4) is non-negative ($paramE). This is unusual for north-up images. Pixel Y coordinate might be inverted."
-                    )
-                }
-
+            if (bitmap != null) {
+                Log.i(TAG, "Bitmap '$fileName' loaded successfully from assets. Dimensions: ${bitmap.width} x ${bitmap.height}")
             } else {
-                // To się nie powinno zdarzyć jeśli pętla przeszła 6 razy
-                Log.e(
-                    TAG,
-                    "Error loading $filename: Incorrect number of parameters read (${params.size})"
-                )
-                worldFileLoaded = false
+                Log.e(TAG, "Failed to decode bitmap from assets: $fileName. Returned null.")
             }
+            return bitmap // Zwróć załadowaną Bitmapę lub null
 
         } catch (e: IOException) {
-            Log.e(TAG, "Error reading world file '$filename' from assets", e)
-            worldFileLoaded = false
+            // Obsługa błędów podczas otwierania lub czytania pliku
+            Log.e(TAG, "Error loading bitmap from assets: $fileName", e)
+            return null // Zwróć null na błędzie odczytu pliku
+        } catch (e: Exception) {
+            // Złap inne nieoczekiwane wyjątki
+            Log.e(TAG, "Unexpected error loading bitmap from assets: $fileName", e)
+            return null
         }
     }
 
@@ -792,125 +885,297 @@ class MainActivity : AppCompatActivity(), SensorEventListener, FragmentManager.O
 
 
         startButton.setOnClickListener {
-            // Sprawdź, czy jesteśmy w stanie ROUTE_SELECTED
-            if (currentAppState != AppState.ROUTE_SELECTED || this.selectedRoute == null || this.selectedRoute!!.markers.isEmpty()) {
-                Log.w(
-                    TAG,
-                    "Przycisk Start kliknięty w nieoczekiwanym stanie (${currentAppState}) lub brak trasy."
-                )
-                resetAppState()
+            Log.d(TAG, "Przycisk START kliknięty.")
+
+            // Sprawdź, czy jesteśmy w stanie, w którym można rozpocząć nawigację (np. ROUTE_SELECTED)
+            // i czy trasa jest wybrana i niepusta.
+            // currentPointIndex == 0 w stanie ROUTE_SELECTED oznacza gotowość do startu.
+            if (currentAppState != AppState.ROUTE_SELECTED || this.selectedRoute == null || this.selectedRoute!!.markers.isEmpty() || this.currentPointIndex != 0) {
+                Log.w(TAG, "Przycisk Start kliknięty w nieoczekiwanym stanie (${currentAppState}) lub brak trasy/index niezerowy (${this.currentPointIndex}). Resetuję stan.")
+                resetAppState() // W przypadku nieoczekiwanego stanu, resetujemy
                 return@setOnClickListener
             }
 
             val route = this.selectedRoute!!
+            val totalMarkers = route.markers.size
 
-            // --- Logika po kliknięciu "Start" (przy punkcie 0) ---
-            // Użytkownik potwierdza dotarcie do punktu 0.
-            this.currentPointIndex = 0 // Index POTWIERDZONEGO punktu
+            // --- LOGIKA PO KLIKNIĘCIU "START" ---
+            // Nawigacja się rozpoczyna. Punkt o indexie 0 (pierwszy) jest celem.
+            // Po kliknięciu Start, punkt 0 jest "osiągnięty", staje się odwiedzony, a punkt 1 staje się nowym celem.
 
-            // Ukryj przycisk Start
-            startButton.visibility = View.GONE
-
-
-            // Zmieniamy przyciski w zależności od tego, czy trasa ma tylko 1 punkt
-            if (route.markers.size > 1) {
-                // Trasa ma więcej niż 1 punkt, pokaż przycisk Dalej
-                nextButton.visibility = View.VISIBLE
-                stopButton.visibility = View.GONE
-                currentAppState = AppState.STARTED // Stan: rozpoczęta, Dalej widoczny
-                Log.d(
-                    TAG,
-                    "Stan aplikacji: ${currentAppState}. Rozpoczęto nawigację (punkt 0), pokaż Dalej."
-                )
-            } else {
-                // Trasa ma tylko 1 punkt. Po Start od razu przechodzimy do stanu Gotowy do Stop.
-                // Przycisk Stop jest od razu widoczny.
-                nextButton.visibility = View.GONE
-                stopButton.visibility = View.VISIBLE
-                currentAppState = AppState.READY_FOR_STOP // Stan: gotowa do Stop (przy 1 punkcie)
+            // Sprawdź, czy trasa ma przynajmniej jeden punkt.
+            if (totalMarkers == 0) {
+                Log.w(TAG, "Przycisk START kliknięty, ale wybrana trasa jest pusta mimo checku.")
+                resetAppState()
+                return@setOnClickListener
             }
 
-            // --- Zaktualizuj wyświetlanie trasy na overlay ---
-            displayGeographicRoute(route, this.currentPointIndex)
+            currentAppState = AppState.STARTED
+            Log.d(TAG, "Stan aplikacji zmieniony na: ${currentAppState}. Rozpoczynam nawigację.")
 
+            // --- Zaktualizuj stany markerów ---
+            // Punkt o indexie 0 jest celem przed kliknięciem Start (currentPointIndex = 0).
+            // Po kliknięciu Start, punkt 0 staje się VISITED. Nowym celem staje się punkt o indexie 1.
+            this.currentPointIndex = 1 // Nowy index celu to 1 (drugi punkt)
+
+            // Sprawdź, czy nowy index celu (1) jest w granicach trasy.
+            if (this.currentPointIndex < totalMarkers) {
+                // Mamy co najmniej 2 punkty w trasie.
+                val firstPointMarker = route.markers[0] // Punkt o indexie 0 (już "odwiedzony" przez Start)
+                val newTargetMarker = route.markers[this.currentPointIndex] // Punkt o indexie 1 (nowy cel)
+
+                // --- SPRAWDŹ AUTOMATYCZNĄ ZMIANĘ PIĘTRA (z punktu 0 na punkt 1) ---
+                if (newTargetMarker.point.floor != firstPointMarker.point.floor) {
+                    // Zmiana piętra wykryta między pierwszym a drugim punktem.
+                    Log.d(TAG, "Wykryto zmianę piętra z ${firstPointMarker.point.floor} na ${newTargetMarker.point.floor} po starcie.")
+                    this.currentFloor = newTargetMarker.point.floor // Zmień aktualne piętro
+                    Log.d(TAG, "Automatyczna zmiana piętra na: $currentFloor.")
+                }
+                // Jeśli piętro się nie zmienia, currentFloor pozostaje piętrem pierwszego punktu.
+                // displayGeographicRoute poniżej użyje poprawny currentFloor.
+
+                // Uaktualnij stany wszystkich markerów na podstawie nowego indexu celu (1)
+                updateRouteState(route, this.currentPointIndex)
+                // Wyświetl trasę na aktualnym piętrze (Overlay użyje zaktualizowanych stanów)
+                displayGeographicRoute(route, this.currentPointIndex)
+                // Zaktualizuj widoczność przycisków pięter (na wypadek automatycznej zmiany piętra)
+                updateFloorButtonState()
+
+                // --- Zaktualizuj widoczność przycisków nawigacyjnych ---
+                startButton.visibility = View.GONE // Start znika
+                nextButton.visibility = View.VISIBLE // Dalej się pojawia
+                stopButton.visibility = View.VISIBLE // Stop się pojawia
+
+
+                Log.d(TAG, "Rozpoczęto nawigację. Nowy cel index: ${this.currentPointIndex} (punkt ${this.currentPointIndex + 1}).")
+
+
+            } else {
+                // Trasa ma tylko 1 punkt (index 0). Po Start od razu koniec nawigacji.
+                // currentPointIndex == 1 (poza zakresem) oznacza koniec nawigacji.
+                Log.d(TAG, "Trasa ma tylko 1 punkt. Koniec nawigacji od razu po starcie.")
+
+                // Uaktualnij stany markerów (punkt 0 stanie się VISITED i END)
+                // currentPointIndex = 1 jest poza zakresem, updateRouteState obsłuży to.
+                updateRouteState(route, this.currentPointIndex)
+                // Wyświetl trasę (punkt 0 będzie VISITED + END)
+                displayGeographicRoute(route, this.currentPointIndex)
+                // Upewnij się, że piętro wyświetlane to piętro tego jedynego punktu
+                this.currentFloor = route.markers.first().point.floor
+                updateFloorButtonState() // Zaktualizuj widoczność przycisków pięter
+
+
+                // --- LOGIKA KOŃCA TRASY (dla trasy 1-punktowej) ---
+                Toast.makeText(this, "Trasa zakończona!", Toast.LENGTH_LONG).show()
+                // Zaktualizuj stan aplikacji i widoczność przycisków
+                currentAppState = AppState.FINISHED_DISPLAYED // Ustaw stan zakończenia
+                // Automatyczny reset stanu po krótkim opóźnieniu, żeby użytkownik zobaczył ostatni punkt
+                Handler(Looper.getMainLooper()).postDelayed({
+                    Log.d(TAG, "Opóźnione wywołanie resetAppState() po zakończeniu trasy (1 punkt).")
+                    resetAppState() // Powrót do stanu wyboru trasy
+                }, 3000)
+
+                // Zaktualizuj widoczność przycisków (wszystkie znikną, potem resetAppState przywróci START)
+                startButton.visibility = View.GONE
+                nextButton.visibility = View.GONE
+                stopButton.visibility = View.GONE
+            }
+
+
+            // --- Logowanie START ---
             startLogging(route)
-            val arrivedPoint = route.markers.getOrNull(this.currentPointIndex)?.point // Punkt 0
-            logNavigationButtonClick("START", this.currentPointIndex, arrivedPoint)
+            // Logujemy osiągnięcie punktu 0 (który stał się VISITED)
+            val arrivedPoint = route.markers.getOrNull(0)?.point // Punkt o indexie 0
+            logNavigationButtonClick("START", 0, arrivedPoint) // Logujemy index 0
+
         }
 
 
         nextButton.setOnClickListener {
-            // Sprawdź, czy jesteśmy w stanie "W trakcie"
-            if (currentAppState != AppState.STARTED || this.selectedRoute == null) {
-                Log.w(TAG, "Przycisk Dalej kliknięty w nieoczekiwanym stanie lub brak trasy.")
-                // Reset do stanu początkowego
-                resetAppState()
-                return@setOnClickListener
-            }
+            Log.d(TAG, "Przycisk DALEJ kliknięty.")
 
-            val route = this.selectedRoute!! // Mamy pewność, że trasa istnieje na podstawie stanu
-
-            // --- Przejdź do następnego punktu ---
-            this.currentPointIndex++ // Zwiększ index
-
-            val targetPoint = route.markers.getOrNull(this.currentPointIndex)?.point
-            logNavigationButtonClick("NEXT", this.currentPointIndex, targetPoint)
-            // --- Zaktualizuj wyświetlanie trasy na overlay ---
-            // Wywołaj displayGeographicRoute, żeby trasa wyświetliła się ze zaktualizowanymi stanami (poprzedni punkt VISITED, obecny CURRENT)
-            displayGeographicRoute(route, this.currentPointIndex)
-
-            // --- Sprawdź, czy dotarliśmy do ostatniego punktu ---
-            if (this.currentPointIndex == route.markers.size - 2) {
-                // Jesteśmy przy ostatnim punkcie
-                // Ukryj przycisk Dalej, pokaż przycisk Stop
-                nextButton.visibility = View.GONE
-                stopButton.visibility = View.VISIBLE
-
-                // Zaktualizuj stan aplikacji
-                currentAppState = AppState.READY_FOR_STOP
-            }
-        }
-
-
-        stopButton.setOnClickListener {
-            // Sprawdź, czy jesteśmy w stanie READY_FOR_STOP
-            // Przycisk Stop jest widoczny tylko w tym stanie.
-            // currentPointIndex W TYM MOMENCIE wskazuje na index PRZEDOSTATNIEGO punktu (size - 2),
-            // ponieważ ostatnie kliknięcie Dalej ustawiło go na size - 2 i zmieniło przycisk na Stop.
-            if (currentAppState != AppState.READY_FOR_STOP || this.selectedRoute == null) {
-                Log.w(
-                    TAG,
-                    "Przycisk Stop kliknięty w nieoczekiwanym stanie (${currentAppState}) lub brak trasy."
-                )
-                // W przypadku błędu, resetujemy do stanu początkowego
-                resetAppState() // Wywołaj resetAppState() w przypadku NIEOCZEKIWANEGO STANU
+            // Sprawdź, czy jesteśmy w stanie nawigacji (NAVIGATING) i czy jest wybrana trasa.
+            // currentPointIndex powinien wskazywać na aktualny cel i być w granicach trasy (< size).
+            if (currentAppState != AppState.STARTED || this.selectedRoute == null || this.currentPointIndex < 0 || this.currentPointIndex >= this.selectedRoute!!.markers.size) {
+                Log.w(TAG, "Przycisk Dalej kliknięty w nieoczekiwanym stanie lub index celu poza zakresem (${this.currentPointIndex}). Resetuję stan.")
+                resetAppState() // W przypadku nieoczekiwanego stanu, resetujemy
                 return@setOnClickListener
             }
 
             val route = this.selectedRoute!!
+            val totalMarkers = route.markers.size
+            val previousTargetIndex = this.currentPointIndex // Zapisz index PUNKTU, który WŁAŚNIE ZOSTANIE OSIĄGNIĘTY/ODWIEDZONY
 
-            // --- Logika po kliknięciu "Stop" (przy OSTATNIM punkcie) ---
-            // Użytkownik potwierdza dotarcie do ostatniego punktu.
-            // Zwiększ index ostatni raz, żeby currentPointIndex stał się indexem ostatniego punktu (size - 1).
-            this.currentPointIndex++ // Zwiększ index POTWIERDZONEGO punktu ostatni raz
 
-            // --- ZALOGUJ KLIKNIĘCIE STOP ---
-            // Zaloguj zdarzenie "STOP", index OSTATNIEGO potwierdzonego punktu (currentPointIndex), i jego współrzędne
-            val arrivedPoint =
-                route.markers.getOrNull(this.currentPointIndex)?.point // Punkt currentPointIndex (index ostatniego punktu)
-            logNavigationButtonClick("STOP", this.currentPointIndex, arrivedPoint)
+            // --- LOGIKA PO KLIKNIĘCIU "DALEJ" ---
+            // Aktualny cel (o indexie previousTargetIndex) staje się odwiedzony.
+            // Następny punkt (o indexie previousTargetIndex + 1) staje się nowym celem (stan CURRENT).
 
-            Log.i(TAG, "Nawigacja zakończona dla trasy: ${route.name}.")
+            // Zwiększ index celu, żeby wskazywał na następny punkt.
+            this.currentPointIndex++ // Nowy index celu
 
-            stopLogging()
 
-            displayGeographicRoute(route, route.markers.size)
+            // --- SPRAWDŹ AUTOMATYCZNĄ ZMIANĘ PIĘTRA ---
+            // Sprawdzamy między punktem, który właśnie został odwiedzony (previousTargetIndex)
+            // a punktem, który staje się nowym celem (currentPointIndex).
+            if (this.currentPointIndex < totalMarkers) { // Upewnij się, że nowy index celu jest w granicach trasy
 
-            Handler(Looper.getMainLooper()).postDelayed({
-                Log.d(TAG, "Opóźnione wywołanie resetAppState() po Stop.")
-                resetAppState()
-            }, 3000)
+                val pointJustVisited = route.markers[previousTargetIndex].point // Punkt poprzedni
+                val newTargetPoint = route.markers[this.currentPointIndex].point // Punkt nowy cel
+
+                if (newTargetPoint.floor != pointJustVisited.floor) {
+                    // Zmiana piętra wykryta.
+                    Log.d(TAG, "Wykryto zmianę piętra z ${pointJustVisited.floor} na ${newTargetPoint.floor} po kliknięciu Dalej.")
+                    this.currentFloor = newTargetPoint.floor // Zmień aktualne piętro
+                    Log.d(TAG, "Automatyczna zmiana piętra na: $currentFloor.")
+                    // updateRouteState i displayGeographicRoute poniżej użyją nowego currentFloor.
+                }
+                // Jeśli piętro się nie zmienia, currentFloor pozostaje takie samo.
+
+            } else {
+                // Nowy currentPointIndex (po zwiększeniu) jest poza zakresem ( == totalMarkers).
+                // Oznacza to, że poprzedni punkt (previousTargetIndex, który jest ostatnim punktem trasy)
+                // został właśnie "odwiedzony", a nawigacja się zakończyła.
+                Log.d(TAG, "Kliknięto DALEJ, a nowy index celu (${this.currentPointIndex}) jest poza zakresem trasy (${totalMarkers}). Koniec nawigacji.")
+
+                // --- LOGIKA KOŃCA TRASY ---
+                Toast.makeText(this, "Trasa zakończona!", Toast.LENGTH_LONG).show()
+
+                // Zaktualizuj stany markerów (ostatni punkt stanie się VISITED i END).
+                // currentPointIndex (teraz totalMarkers) jest poza zakresem, co sygnalizuje koniec w updateRouteState.
+                updateRouteState(route, this.currentPointIndex)
+                // Wyświetl trasę (ostatni punkt będzie VISITED + END).
+                // Przekazujemy currentPointIndex = totalMarkers do displayGeographicRoute,
+                // co jest używane przez Overlay, żeby wiedzieć o końcu nawigacji.
+                displayGeographicRoute(route, this.currentPointIndex)
+
+                // Upewnij się, że piętro wyświetlane to piętro ostatniego punktu trasy
+                this.currentFloor = route.markers.last().point.floor
+                updateFloorButtonState() // Zaktualizuj widoczność przycisków pięter
+
+
+                // Zaktualizuj stan aplikacji i widoczność przycisków
+                currentAppState = AppState.FINISHED_DISPLAYED // Ustaw stan zakończenia
+                // Automatyczny reset stanu po krótkim opóźnieniu, żeby użytkownik zobaczył ostatni punkt
+                Handler(Looper.getMainLooper()).postDelayed({
+                    Log.d(TAG, "Opóźnione wywołanie resetAppState() po zakończeniu trasy.")
+                    resetAppState() // Powrót do stanu wyboru trasy (przywróci przycisk START)
+                }, 3000)
+
+                // Zaktualizuj widoczność przycisków (wszystkie znikną, potem resetAppState przywróci START)
+                startButton.visibility = View.GONE
+                nextButton.visibility = View.GONE
+                stopButton.visibility = View.GONE
+
+
+            } // Koniec if (this.currentPointIndex < totalMarkers)
+
+
+            // Ta część wykona się TYLKO jeśli NIE JESTEŚMY NA KOŃCU TRASY po kliknięciu Dalej
+            if (currentAppState == AppState.STARTED) { // Sprawdzamy, czy stan nie zmienił się na ROUTE_COMPLETED
+
+                // Uaktualnij stany wszystkich markerów na podstawie nowego currentPointIndex
+                updateRouteState(route, this.currentPointIndex)
+                // Wyświetl trasę na aktualnym piętrze (Overlay użyje zaktualizowanych stanów i nowego currentFloor)
+                displayGeographicRoute(route, this.currentPointIndex)
+                // Zaktualizuj widoczność przycisków pięter (na wypadek automatycznej zmiany piętra)
+                updateFloorButtonState()
+
+                // TODO: Ewentualna logika po przejściu do następnego punktu/piętra (np. komunikat)
+                // Komunikat powinien informować o dotarciu do previousTargetIndex i celu na newTargetIndex.
+                // Znajdź marker, który jest nowym celem
+                val newTargetMarker = route.markers.getOrNull(this.currentPointIndex)
+                if (newTargetMarker != null) {
+                    Toast.makeText(this, "Idź do punktu ${this.currentPointIndex + 1} (piętro ${newTargetMarker.point.floor})", Toast.LENGTH_SHORT).show()
+                }
+
+
+                // Zaktualizuj widoczność przycisków - już zaktualizowane w if/else
+                // jeśli currentPointIndex == totalMarkers - 1 (przedostatni punkt), to next znika, stop pojawia się.
+                // Jeśli currentPointIndex < totalMarkers - 1, next i stop są już widoczne.
+                if (this.currentPointIndex == totalMarkers - 1) {
+                    // Jesteśmy przy ostatnim punkcie trasy (index size - 1)
+                    nextButton.visibility = View.GONE // Dalej znika
+                    stopButton.visibility = View.VISIBLE // Stop się pojawia (oznacza "dotarłem do ostatniego")
+                    Log.d(TAG, "Dotarto do ostatniego punktu trasy (index ${this.currentPointIndex}). Pokaż przycisk STOP.")
+                    // Zaktualizuj stan aplikacji na "Gotowy do Stop"
+                    // currentAppState = AppState.READY_FOR_STOP // Możemy zdefiniować taki stan jeśli potrzebny, ale NAVIGATING też może działać.
+                    // Na razie pozostaniemy w NAVIGATING do momentu kliknięcia STOP.
+                } else {
+                    // Nadal w środku trasy
+                    nextButton.visibility = View.VISIBLE
+                    stopButton.visibility = View.VISIBLE // Stop zawsze widoczny podczas nawigacji
+                }
+            }
+
+
+            // --- Logowanie DALEJ ---
+            // Logujemy osiągnięcie punktu previousTargetIndex (który stał się VISITED)
+            val arrivedPoint = route.markers.getOrNull(previousTargetIndex)?.point // Punkt o indexie previousTargetIndex
+            logNavigationButtonClick("NEXT", previousTargetIndex, arrivedPoint) // Logujemy index tego, do którego dotarliśmy
+
+
         }
+
+
+        stopButton.setOnClickListener {
+            Log.d(TAG, "Przycisk STOP kliknięty.")
+
+            // Przycisk Stop jest widoczny podczas nawigacji (po Start)
+            // i oznacza "Potwierdzam dotarcie do ostatniego punktu (currentPointIndex)".
+            // currentPointIndex W TYM MOMENCIE wskazuje na index OSTATNIEGO PUNKTU TRASY (size - 1),
+            // jeśli dotarliśmy do końca normalnie.
+            // Jeśli kliknięto Stop w środku trasy, currentPointIndex wskazuje na ostatni osiągnięty cel.
+            // Decydujemy, że kliknięcie STOP ZAWSZE przerywa nawigację i wraca do stanu początkowego.
+
+            if (currentAppState != AppState.STARTED && currentAppState != AppState.READY_FOR_STOP) {
+                Log.w(TAG, "Przycisk Stop kliknięty w nieoczekiwanym stanie (${currentAppState}) lub brak trasy.")
+                // W przypadku błędu, resetujemy do stanu początkowego
+                resetAppState()
+                return@setOnClickListener
+            }
+            if (this.selectedRoute == null) {
+                Log.w(TAG, "Przycisk Stop kliknięty, ale brak wybranej trasy.")
+                resetAppState()
+                return@setOnClickListener
+            }
+
+
+            val route = this.selectedRoute!!
+
+            // --- LOGIKA PO KLIKNIĘCIU "STOP" ---
+            // Nawigacja jest przerywana.
+
+            // Zaloguj zdarzenie "STOP", index OSTATNIEGO osiągniętego celu (currentPointIndex), i jego współrzędne.
+            // Jeśli kliknięto Stop w środku trasy, logujemy ostatni PRAWIDŁOWY index celu.
+            // Jeśli kliknięto Stop na końcu, logujemy index ostatniego punktu (size - 1).
+            val lastReachedIndexForLog = if (this.currentPointIndex < route.markers.size) this.currentPointIndex else route.markers.size - 1
+            val arrivedPointForLog = route.markers.getOrNull(lastReachedIndexForLog)?.point
+            logNavigationButtonClick("STOP", lastReachedIndexForLog, arrivedPointForLog)
+
+
+            Log.i(TAG, "Nawigacja zatrzymana dla trasy: ${route.name} przy punkcie ${lastReachedIndexForLog + 1}.")
+
+            stopLogging() // Zatrzymaj logowanie danych czujników/WiFi
+
+
+            // --- Resetowanie stanu aplikacji i UI ---
+            // Resetujemy index celu i stan aplikacji.
+            // displayGeographicRoute w resetAppState użyje indexu 0.
+            resetAppState() // Ta metoda ustawi currentPointIndex na 0 i odświeży UI
+
+            Toast.makeText(this, "Nawigacja zatrzymana.", Toast.LENGTH_SHORT).show()
+
+
+            // Nie potrzebujemy tu już ręcznego zmieniania widoczności przycisków ani displayGeographicRoute,
+            // ponieważ resetAppState() to robi.
+            // Nie potrzebujemy też opóźnienia, chyba że chcemy, żeby komunikat "Nawigacja zatrzymana" był widoczny dłużej.
+            // Handler(Looper.getMainLooper()).postDelayed({
+            //     Log.d(TAG, "Opóźnione wywołanie resetAppState() po Stop.")
+            //     resetAppState()
+            // }, 3000)
+
+        } // Koniec listenera stopButton
     }
 
     private fun showDeleteConfirmationDialog(routeNameToDelete: String) {
@@ -1005,13 +1270,14 @@ class MainActivity : AppCompatActivity(), SensorEventListener, FragmentManager.O
         supportActionBar?.setTitle("Pomiar Trasy")
         // Zresetuj zmienne śledzące trasę
         this.selectedRoute = null
-        this.currentPointIndex = -1
+        this.currentPointIndex = 0
 
         // Ustaw przyciski do stanu początkowego
         startButton.visibility = View.VISIBLE
         startButton.isEnabled = false
         nextButton.visibility = View.GONE
         stopButton.visibility = View.GONE
+        floorButtonsContainer.visibility = View.VISIBLE
 
         // Ustaw stan aplikacji na IDLE
         currentAppState = AppState.IDLE
@@ -1345,70 +1611,49 @@ class MainActivity : AppCompatActivity(), SensorEventListener, FragmentManager.O
     // --- Obsługa Skanowania WiFi ---
 
     private fun triggerWifiScan(): Boolean {
-        // Sprawdź uprawnienia i stan WiFi
-        if (ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.ACCESS_WIFI_STATE
-            ) != PackageManager.PERMISSION_GRANTED ||
-            ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.CHANGE_WIFI_STATE
-            ) != PackageManager.PERMISSION_GRANTED || // Potrzebne do startScan
-            ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.ACCESS_COARSE_LOCATION
-            ) != PackageManager.PERMISSION_GRANTED ||
-            ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.ACCESS_FINE_LOCATION
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            Log.w(TAG, "WiFi: Próba skanowania bez wystarczających uprawnień.")
+        if (!checkWifiPermissions()) {
+            Log.w("myWifiScan", "WiFi: Brak wymaganych uprawnień.")
             stopLoggingInternal(saveData = false)
             return false
         }
+
         if (!wifiManager.isWifiEnabled) {
-            Log.w(TAG, "WiFi: Próba skanowania przy wyłączonym WiFi.")
-            Toast.makeText(this, "WiFi wyłączone, skanowanie WiFi pominięte.", Toast.LENGTH_SHORT)
-                .show()
+            Log.w("myWifiScan", "WiFi: Próba skanowania przy wyłączonym WiFi.")
+            Toast.makeText(this, "WiFi wyłączone, skanowanie WiFi pominięte.", Toast.LENGTH_SHORT).show()
             return false
         }
 
         return try {
-            Log.d(TAG, "WiFi: Wywołanie wifiManager.startScan()")
+            Log.d("myWifiScan", "WiFi: Wywołanie wifiManager.startScan()")
             val started = wifiManager.startScan()
             if (!started) {
-                Log.w(
-                    TAG,
-                    "WiFi: wifiManager.startScan() zwrócił false. Skanowanie nie zostało zainicjowane (możliwe throttlowanie)."
-                )
+                Log.w("myWifiScan", "WiFi: wifiManager.startScan() zwrócił false. Możliwe throttling.")
             }
             started
         } catch (se: SecurityException) {
-            Log.e(TAG, "WiFi: SecurityException podczas startScan.", se)
+            Log.e("myWifiScan", "WiFi: SecurityException podczas startScan.", se)
             stopLoggingInternal(saveData = false)
             false
         } catch (e: Exception) {
-            Log.e(TAG, "WiFi: Wyjątek podczas startScan.", e)
+            Log.e("myWifiScan", "WiFi: Wyjątek podczas startScan.", e)
             false
         }
     }
 
+    private fun checkWifiPermissions(): Boolean {
+        val permissions = listOf(
+            Manifest.permission.ACCESS_WIFI_STATE,
+            Manifest.permission.CHANGE_WIFI_STATE,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        )
+        return permissions.all {
+            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
     private fun processWifiScanResults() {
-        // Sprawdź uprawnienie przed dostępem do wyników
-        if (ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.ACCESS_WIFI_STATE
-            ) != PackageManager.PERMISSION_GRANTED ||
-            ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.ACCESS_FINE_LOCATION
-            ) != PackageManager.PERMISSION_GRANTED ||
-            ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.ACCESS_COARSE_LOCATION
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
+        if (!checkWifiPermissions()) {
             Log.e(TAG, "WiFi: Brak uprawnień do pobrania wyników skanowania.")
             stopLoggingInternal(saveData = false)
             return
@@ -1416,15 +1661,12 @@ class MainActivity : AppCompatActivity(), SensorEventListener, FragmentManager.O
 
         try {
             val scanResults = wifiManager.scanResults
-            Log.d(TAG, "WiFi: Przetwarzanie ${scanResults?.size ?: 0} wyników.")
-
-            if (scanResults == null || scanResults.isEmpty()) {
+            if (scanResults.isNullOrEmpty()) {
                 Log.w(TAG, "WiFi: Brak wyników skanowania.")
                 return
             }
 
             val timestamp = SimpleDateFormat("MMddHHmmss.SSS", Locale.getDefault()).format(Date())
-
             scanResults.forEach { result ->
                 if (!result.BSSID.isNullOrEmpty()) {
                     val data = arrayOf(
@@ -1439,6 +1681,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener, FragmentManager.O
                     allData.add(data)
                 }
             }
+
             Log.d(TAG, "WiFi: Dodano ${scanResults.size} wyników do listy.")
 
         } catch (se: SecurityException) {
@@ -1449,7 +1692,6 @@ class MainActivity : AppCompatActivity(), SensorEventListener, FragmentManager.O
             Toast.makeText(this, "Błąd przetwarzania wyników WiFi.", Toast.LENGTH_SHORT).show()
         }
     }
-
 
     // --- Obsługa Skanowania BLE ---
 
@@ -1913,6 +2155,18 @@ class MainActivity : AppCompatActivity(), SensorEventListener, FragmentManager.O
                 supportActionBar?.setTitle(selectedRouteFromDialog.name)
 
                 this.selectedRoute = selectedRouteFromDialog
+
+                if (this.selectedRoute != null && this.selectedRoute!!.markers.isNotEmpty()) {
+                    val firstPointFloor = this.selectedRoute!!.markers.first().point.floor // Pobierz piętro pierwszego punktu
+                    this.currentFloor = firstPointFloor // Ustaw aktualne piętro na piętro pierwszego punktu
+                    Log.d(TAG, "Dialog wyboru: Ustawiono początkowe piętro na: ${this.currentFloor} (piętro pierwszego punktu trasy).")
+                } else {
+                    // Jeśli trasa jest pusta lub null (co nie powinno się zdarzyć po przeładowaniu, ale jako zabezpieczenie)
+                    // Ustaw piętro na domyślne lub pierwsze dostępne.
+                    this.currentFloor = floorFileMappingPng.keys.firstOrNull() ?: 0 // Ustaw na pierwsze dostępne piętro lub 0
+                    Log.w(TAG, "Dialog wyboru: Wybrana trasa jest pusta lub null. Ustawiono piętro na domyślne: ${this.currentFloor}")
+                }
+
                 startButton.isEnabled = true
 
                 currentAppState = AppState.ROUTE_SELECTED
@@ -1921,7 +2175,10 @@ class MainActivity : AppCompatActivity(), SensorEventListener, FragmentManager.O
                     "Stan aplikacji: ${currentAppState}. Wybrano trasę: ${selectedRouteFromDialog.name}"
                 )
 
-                this.currentPointIndex = -1
+                // Odśwież widoczność przycisków pięter dla nowego piętra
+                updateFloorButtonState()
+
+                this.currentPointIndex = 0
                 Log.d(TAG, "Dialog wyboru: Wywołuję displayGeographicRoute dla trasy: ${this.selectedRoute?.name}, index: ${this.currentPointIndex}")
 
                 displayGeographicRoute(this.selectedRoute, this.currentPointIndex)
@@ -1943,6 +2200,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener, FragmentManager.O
         startButton.visibility = View.GONE
         nextButton.visibility = View.GONE
         stopButton.visibility = View.GONE
+        floorButtonsContainer.visibility = View.GONE
 
 
         // Wyczyść wyświetlanie trasy na overlay podczas tworzenia nowej trasy
@@ -1950,6 +2208,13 @@ class MainActivity : AppCompatActivity(), SensorEventListener, FragmentManager.O
 
         // Otwórz fragment do tworzenia trasy
         val fragment = CreateRouteFragment()
+        val availableFloors = floorFileMappingPng.keys.sorted().toIntArray()
+        val args = Bundle().apply {
+            // Zapisz listę pięter w Bundle pod kluczem (np. "available_floors")
+            putIntArray("available_floors", availableFloors) // Użyj putIntArray dla IntArray
+        }
+        fragment.arguments = args
+
         supportFragmentManager.beginTransaction()
             .replace(
                 R.id.mainContentContainer,
